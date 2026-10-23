@@ -114,8 +114,8 @@ function snrAndFreq(chunk) {
 }
 
 // preprocess_data.compute_hr_czt: power spectrum on a fine grid 0.75-3.5 Hz (10x points), peak -> BPM
-function hrCzt(x) {
-  const n = x.length, m = mean(x), M = n * 10, f0 = 0.75, f1 = 3.5;
+function hrCzt(x, M = x.length * 10) {
+  const n = x.length, m = mean(x), f0 = 0.75, f1 = 3.5;
   let bestP = -1, bestF = f0;
   for (let k = 0; k < M; k++) {
     const f = f0 + (f1 - f0) * k / M;
@@ -156,7 +156,10 @@ class PpgMeter {
     this.b1 = null; this.b2 = null;  // clip bounds: p20-p80 of POS, p3-p97 after detrend
     this.freq = null;   // pulse frequency of the last good window, Hz (for the Gaussian on the plot)
     this.thr = SNR_THR; this.minRun = MIN_RUN_SEC;  // fields so check.html can sweep them
-    this.run = 0;       // current continuous good stretch, s
+    this.run = 0;       // green time in the current run (gaps not counted), s
+    this.shown = 0;     // run, but never going back while the run lasts (provisional SNR gets revised)
+    this.green = false; // the newest 0.5 s step is good
+    this.liveHr = null; // HR over the current, still growing run (expanding window, as compute_expanding_hr_curve)
     this.hr = null;
     this.failed = false;
   }
@@ -213,18 +216,25 @@ class PpgMeter {
     return this.q[i];
   }
 
-  // Longest current run of good samples where bad gaps <= MAX_GAP_SEC; HR once it reaches MIN_RUN_SEC
+  // Current run of good samples where bad gaps <= MAX_GAP_SEC; HR once its green time reaches MIN_RUN_SEC
   updateRun() {
-    let start = -1, lastGood = -1;
+    let start = -1, lastGood = -1, good = 0;
     for (let i = 0; i < this.n; i++) {
       if (this.q[i] >= this.thr) {
-        if (start < 0 || i - lastGood - 1 > MAX_GAP_SEC * FS) start = i;
+        if (start < 0 || i - lastGood - 1 > MAX_GAP_SEC * FS) { start = i; good = 0; }
         lastGood = i;
+        good++;
       }
     }
     const alive = lastGood >= 0 && this.n - 1 - lastGood <= MAX_GAP_SEC * FS;
-    this.run = alive ? (lastGood - start + 1) / FS : 0;
-    if (this.run >= this.minRun) this.hr = hrCzt(this.filtered(start, lastGood + 1));
+    this.run = alive ? good / FS : 0;
+    // a reset needs a gap > 1.5 s, i.e. several steps with run = 0, so a new run always starts from 0
+    this.shown = this.run === 0 ? 0 : Math.max(this.shown, this.run);
+    this.green = this.q[this.n - 1] >= this.thr;
+    if (!alive || (lastGood + 1 - start) / FS < WIN_SEC) { this.liveHr = null; return; }
+    const seg = this.filtered(start, lastGood + 1);
+    if (this.shown >= this.minRun) this.hr = hrCzt(seg);
+    else this.liveHr = hrCzt(seg, 550);  // 0.005 Hz grid: cheap enough for every 0.5 s on a phone
   }
 
   // Processed signal of the last BUF_SEC and its Gaussian-smoothed version scaled to the same spread (as full_refine)

@@ -18,24 +18,30 @@
     display: grid; grid-template-rows: auto 64px 3em minmax(120px, 1fr) auto; justify-items: center; align-items: center; gap: 8px;
   }
   .cam { position: relative; width: min(60vw, 34dvh, 260px); aspect-ratio: 1; }
-  .cam video { position: absolute; inset: 7%; width: 86%; height: 86%; border-radius: 50%; object-fit: cover; }
+  .cam video { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; background: var(--muted); }
+  /* the ring lies on the video's own edge: no track, no gap */
   .cam svg { position: absolute; inset: 0; transform: rotate(-90deg); }
-  .cam circle { fill: none; stroke-width: 4; }
-  #ring { stroke: var(--good); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .3s; }
+  #ring { fill: none; stroke: var(--good); stroke-width: 5; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  #count {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: calc(min(60vw, 34dvh, 260px) * 0.2); font-weight: 700; font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 8px rgba(0, 0, 0, .6);
+  }
   #hr { font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; }
+  #hr.live { color: var(--muted); }
   #msg {
     height: 3em; overflow: hidden; color: var(--muted); text-align: center; font-size: 15px; line-height: 1.5em;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
   .plot { position: relative; width: 100%; height: 100%; }
   .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-  /* aurora: low-res quality colours stretched and blurred, fading out at every edge */
+  /* aurora: low-res quality colours stretched and blurred, fading out at top and bottom only;
+     it overhangs the plot by AURORA_PX per side so it runs to the screen edges and the blur's own fade stays off-screen */
   #aurora {
+    left: -48px; width: calc(100% + 96px);
     filter: blur(8px);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent), linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
-    -webkit-mask-composite: source-in;
-    mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent), linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
-    mask-composite: intersect;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent);
   }
   .buttons { display: flex; gap: 12px; }
   button { font: inherit; padding: 12px 24px; border-radius: 24px; border: 2px solid var(--fg); background: var(--bg); color: var(--fg); }
@@ -48,9 +54,9 @@
     <video playsinline muted></video>
     <!-- green ring: share of the clean signal collected for the HR -->
     <svg viewBox="0 0 100 100">
-      <circle cx="50" cy="50" r="47" stroke="var(--muted)" opacity="0.25"></circle>
-      <circle id="ring" cx="50" cy="50" r="47" pathLength="1"></circle>
+      <circle id="ring" cx="50" cy="50" r="47.5" pathLength="1"></circle>
     </svg>
+    <div id="count"></div>
   </div>
   <div id="hr"></div>
   <div id="msg">Закройте пальцем заднюю камеру и нажмите «Старт»</div>
@@ -61,11 +67,13 @@
   </div>
 </main>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
-<script src="ppg.js?v=3"></script>
+<script src="ppg.js?v=4"></script>
 <script>
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
-const ring = document.getElementById('ring');
+const ring = document.getElementById('ring'), countEl = document.getElementById('count');
+const AURORA_PX = 48;  // must match #aurora's overhang in CSS
+let shown = 0, shownAt = 0, display = 0;  // progress interpolation between the 0.5 s quality steps
 const hrEl = document.getElementById('hr'), msgEl = document.getElementById('msg');
 const startBtn = document.getElementById('start'), torchBtn = document.getElementById('torch');
 const grab = document.createElement('canvas');
@@ -76,6 +84,7 @@ let stream = null, meter = null;
 async function start() {
   stop();
   hrEl.textContent = '';
+  shown = display = lastNow = 0;
   setRing(0);
   if (!navigator.mediaDevices) { msgEl.textContent = 'Камера доступна только по HTTPS или с localhost'; return; }
   try {
@@ -108,10 +117,27 @@ function setTorch(on) {
   if (stream && !torchBtn.hidden) stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: on }] }).catch(() => {});
 }
 
-// p in 0..1; an empty ring is hidden so the round cap doesn't leave a dot
+// p in 0..1; an empty ring is hidden so the round cap doesn't leave a dot. Also the countdown in the camera.
 function setRing(p) {
-  ring.style.strokeDashoffset = 1 - Math.min(1, p);
+  p = Math.min(1, p);
+  ring.style.strokeDashoffset = 1 - p;
   ring.style.opacity = p > 0 ? 1 : 0;
+  countEl.textContent = (MIN_RUN_SEC * (1 - p)).toFixed(2);
+}
+
+// Green time shown to the user: the meter updates it every 0.5 s, in between it creeps on in real time
+// while the newest step is green (at most up to the next step), and it never goes back unless the run resets.
+// Forward jumps (revised SNR joins two green pieces) are eased out over ~0.5 s instead of snapping.
+let lastNow = 0;
+function progress(now) {
+  const dt = lastNow ? Math.min(0.1, (now - lastNow) / 1000) : 0;
+  lastNow = now;
+  if (meter.shown !== shown) { shown = meter.shown; shownAt = now; }
+  if (shown === 0) return (display = 0);
+  const creep = meter.green ? Math.min(STEP_SEC, (now - shownAt) / 1000) : 0;
+  const target = Math.min(shown + creep, MIN_RUN_SEC), lag = target - display;
+  if (lag > 0) display += Math.min(lag, Math.max(dt, lag * dt / 0.5));
+  return display;
 }
 
 function nextFrame() {
@@ -131,16 +157,21 @@ function onFrame(now, meta) {
   draw();
   if (meter.hr !== null) {
     setRing(1);
+    hrEl.classList.remove('live');
     hrEl.textContent = Math.round(meter.hr) + ' уд/мин';
     msgEl.textContent = 'Готово';
     stop();
   } else if (meter.failed) {
     setRing(0);
+    hrEl.textContent = '';
     msgEl.textContent = `Не удалось набрать ${MIN_RUN_SEC} с чистого сигнала. Держите палец неподвижно и попробуйте ещё раз`;
     stop();
   } else {
-    setRing(meter.run / MIN_RUN_SEC);
-    msgEl.textContent = `Чистый сигнал: ${meter.run.toFixed(1)} из ${MIN_RUN_SEC} с`;
+    setRing(progress(performance.now()) / MIN_RUN_SEC);
+    // provisional HR over the run collected so far, greyed until the full interval is reached
+    hrEl.classList.add('live');
+    hrEl.textContent = meter.liveHr === null ? '' : Math.round(meter.liveHr) + ' уд/мин';
+    msgEl.textContent = 'Держите палец неподвижно';
     nextFrame();
   }
 }
@@ -168,12 +199,17 @@ function draw() {
   if (meter.b1 === null) return;
   const total = BUF_SEC * FS, [sig, smooth] = meter.plotSignals(), s0 = meter.n - sig.length;
   const x = i => w - (sig.length - i) * w / total;
-  // Aurora: one low-res column per 1/64 of the plot, coloured by the quality of the sample under it
+  // Aurora: one low-res column per 1/64 of its width, coloured by the quality of the sample under it.
+  // Columns beyond the known quality (before the start, the not yet computed newest step, the overhang)
+  // take the nearest known value, so there are no dark ends.
   const bg = hexRgb('--bg'), bad = hexRgb('--bad'), good = hexRgb('--good');
-  for (let c = 0; c < aurora.width; c++) {
-    const q = meter.quality(meter.n - total + Math.floor((c + 0.5) * total / aurora.width));
-    if (!(q >= 0)) continue;  // NaN (not computed yet) or undefined (before the start)
-    actx.fillStyle = qualityColor(q, bg, bad, good);
+  let last = meter.n - 1;
+  while (last >= 0 && !(meter.quality(last) >= 0)) last--;
+  const ext = AURORA_PX / plot.clientWidth;
+  for (let c = 0; last >= 0 && c < aurora.width; c++) {
+    const f = (c + 0.5) / aurora.width * (1 + 2 * ext) - ext;  // position in plot widths
+    const i = Math.min(last, Math.max(0, meter.n - total + Math.floor(f * total)));
+    actx.fillStyle = qualityColor(meter.quality(i), bg, bad, good);
     actx.fillRect(c, 0, 1, aurora.height);
   }
   let min = Infinity, max = -Infinity;
@@ -194,6 +230,7 @@ function draw() {
   line(smooth, css('--fg'), 4, 1);
 }
 
+setRing(0);
 startBtn.onclick = () => (stream ? stop() : start());
 torchBtn.onclick = () => setTorch(!torchBtn.classList.contains('on'));
 </script>
