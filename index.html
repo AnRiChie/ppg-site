@@ -58,6 +58,10 @@
   .buttons { display: flex; gap: 12px; }
   button { font: inherit; padding: 12px 24px; border-radius: 24px; border: 2px solid var(--fg); background: var(--bg); color: var(--fg); }
   button.on { background: var(--fg); color: var(--bg); }
+  /* "Ещё раз" only on the result screen; hidden by visibility so the layout doesn't move */
+  #start { visibility: hidden; }
+  #start.shown { visibility: visible; }
+  body.done #torch { display: none; }
 
   /* ---- finale (body.done): aurora floods the screen, the logo is drawn and turns white, results come in ---- */
   #glow { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
@@ -118,10 +122,10 @@
     <div id="count"></div>
   </div>
   <div id="hr"></div>
-  <div id="msg">Приложите палец к камере и нажмите «Старт»</div>
+  <div id="msg">Приложите палец к камере, чтобы начать</div>
   <div class="plot"><canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas></div>
   <div class="buttons">
-    <button id="start">Старт</button>
+    <button id="start">Ещё раз</button>
     <button id="torch" class="on" hidden>Вспышка</button>
   </div>
 </main>
@@ -135,7 +139,7 @@
   </div>
 </div>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
-<script src="ppg.js?v=6"></script>
+<script src="ppg.js?v=7"></script>
 <script>
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
@@ -197,6 +201,7 @@ function finish() {
   const rise = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }];
   hrBox.animate(rise, { duration: 500, delay: 2900, easing: 'ease-out', fill: 'forwards' });
   statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 3100 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
+  startBtn.classList.add('shown');
 }
 
 // small dark green and white diamonds flying out of the ring
@@ -242,15 +247,29 @@ function setMsg(text) {
 const fingerOn = (r, g, b, k = 1) => r > 40 && r > 1.6 * k * Math.max(g, b);
 let fingerAt = 0;  // when the finger was detected and the recording started, ms
 let offFrames = 0; // consecutive frames without the finger while recording
+let failAt = 0;    // when the last attempt failed, ms; 0 = no failed attempt pending
+let armed = true;  // after a failure a new attempt waits until the finger has been lifted
 
+const MSG_PLACE = 'Приложите палец к камере, чтобы начать', MSG_HOLD = 'Держите палец неподвижно';
+const MSG_MOVE = 'Попробуйте поменять положение пальца или руки и потом держите палец неподвижно';
+
+// back to waiting for the finger: no recording, empty ring and plot
+function resetRecording() {
+  meter = null;
+  shown = display = lastNow = 0;
+  setRing(0);
+  hrEl.textContent = '';
+  draw();
+}
+
+// The camera starts by itself (and again from "Ещё раз"); the measurement starts when a finger covers it
 async function start() {
   stop();
   resetFinale();
-  hrEl.textContent = '';
-  shown = display = lastNow = 0;
-  meter = null;  // created once the finger is on the camera
-  setRing(0);
-  draw();
+  resetRecording();
+  failAt = 0;
+  armed = true;
+  startBtn.classList.remove('shown');
   if (!navigator.mediaDevices) { setMsg('Камера доступна только по HTTPS или с localhost'); return; }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -266,15 +285,13 @@ async function start() {
   const track = stream.getVideoTracks()[0];
   torchBtn.hidden = !(track.getCapabilities && track.getCapabilities().torch);
   setTorch(torchBtn.classList.contains('on'));
-  setMsg('Приложите палец к камере');
-  startBtn.textContent = 'Стоп';
+  setMsg(MSG_PLACE);
   nextFrame();
 }
 
 function stop() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
-  startBtn.textContent = 'Старт';
 }
 
 function setTorch(on) {
@@ -321,18 +338,20 @@ function onFrame(now, meta) {
   r /= px; g /= px; b /= px;
   // the recording starts only once the finger covers the camera
   if (!meter) {
-    if (!fingerOn(r, g, b)) { nextFrame(); return; }
+    if (failAt) {
+      // after a failed attempt: its message, then "try again"; the next attempt needs the finger lifted first
+      if (now - failAt > 2500) setMsg('Попробуйте снова');
+      if (!fingerOn(r, g, b, 0.9)) armed = true;
+    }
+    if (!armed || !fingerOn(r, g, b)) { nextFrame(); return; }
     meter = new PpgMeter();
     fingerAt = now;
     offFrames = 0;
+    failAt = 0;
   } else if (!fingerOn(r, g, b, 0.9) && ++offFrames >= 5) {
     // finger taken away (5 frames, ~0.17 s, so one odd frame doesn't count): drop the recording and wait again
-    meter = null;
-    shown = display = lastNow = 0;
-    setRing(0);
-    hrEl.textContent = '';
-    draw();
-    setMsg('Приложите палец к камере');
+    resetRecording();
+    setMsg(MSG_PLACE);
     nextFrame();
     return;
   } else if (fingerOn(r, g, b, 0.9)) offFrames = 0;
@@ -343,17 +362,20 @@ function onFrame(now, meta) {
     stop();
     finish();
   } else if (meter.failed) {
-    setRing(0);
-    hrEl.textContent = '';
-    setMsg(`Не удалось набрать ${MIN_RUN_SEC} с чистого сигнала. Держите палец неподвижно и попробуйте ещё раз`);
-    stop();
+    // 30 s in a row without a good signal; the camera stays on for the next attempt
+    resetRecording();
+    failAt = now;
+    armed = false;
+    setMsg('Не удалось записать качественный сигнал');
+    nextFrame();
   } else {
     setRing(progress(performance.now()) / MIN_RUN_SEC);
     // provisional HR over the run collected so far, greyed until the full interval is reached
     hrEl.classList.add('live');
     hrEl.textContent = meter.liveHr === null ? '' : Math.round(meter.liveHr) + ' уд/мин';
-    setMsg(meter.badSec >= 10 ? 'Попробуйте поменять положение пальца или руки и потом держите палец неподвижно'
-      : now - fingerAt < 3000 ? 'Примите комфортное положение' : 'Держите палец неподвижно');
+    // the "change position" hint shows for 4 s at 10 and 20 s without a good signal, then the usual line again
+    const bad = meter.badSec, hint = (bad >= 10 && bad < 14) || (bad >= 20 && bad < 24);
+    setMsg(hint ? MSG_MOVE : now - fingerAt < 3000 ? 'Примите комфортное положение' : MSG_HOLD);
     nextFrame();
   }
 }
@@ -413,7 +435,8 @@ function draw() {
 }
 
 setRing(0);
-startBtn.onclick = () => (stream ? stop() : start());
+startBtn.onclick = start;
+start();
 torchBtn.onclick = () => setTorch(!torchBtn.classList.contains('on'));
 </script>
 </body>

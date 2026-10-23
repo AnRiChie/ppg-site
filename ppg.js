@@ -9,7 +9,7 @@ const MIN_RUN_SEC = 30;   // continuous good signal needed for HR (calculation i
 const MAX_GAP_SEC = 1.5;  // bad gap allowed inside a run
 const BUF_SEC = 10;       // history the filters see per call; also the plot length
 const BLOCK_SEC = 30;     // clipping bounds are refreshed from the last 30 s every 30 s
-const TIMEOUT_SEC = 90;   // give up after this, unless a good run is still going on
+const FAIL_SEC = 30;      // give up after this long without any good signal
 
 function mean(a) {
   let s = 0;
@@ -177,11 +177,14 @@ function hrv(x, hr) {
 class PpgMeter {
   constructor() {
     // room for a run that is still green at the timeout to reach MIN_RUN_SEC
-    const max = (TIMEOUT_SEC + MIN_RUN_SEC) * FS;
+    // there is no time limit any more, so the arrays grow (see grow) from 60 s
+    const max = 60 * FS;
     this.r = new Float64Array(max); this.g = new Float64Array(max); this.b = new Float64Array(max);
     this.q = new Float64Array(max).fill(NaN);  // SNR per sample, NaN until its 0.5 s step is computed
     // merge_v2_snr_profile: each sample's SNR is the Hann-weighted mean of all 3 s windows covering it
     this.num = new Float64Array(max); this.den = new Float64Array(max);
+    this.runStart = -1; // first sample of the current green run, -1 when there is none
+    this.boundsAt = 0;  // n at the last clip-bounds refresh
     this.hann = new Float64Array(WIN_SEC * FS).map((_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * (i + 1) / (WIN_SEC * FS + 1)));
     this.n = 0;
     this.prev = null;   // last raw frame [t, r, g, b] for resampling
@@ -204,25 +207,38 @@ class PpgMeter {
     if (this.hr !== null || this.failed) return;
     if (this.prev === null) { this.prev = [t, r, g, b]; this.t0 = t; return; }
     const [tp, rp, gp, bp] = this.prev;
-    while (this.n < this.r.length) {
+    while (!this.failed && this.hr === null) {
       const ts = this.t0 + this.n / FS;
       if (ts > t) break;
       const a = t > tp ? Math.max(0, (ts - tp) / (t - tp)) : 1;
       this.addSample(rp + a * (r - rp), gp + a * (g - gp), bp + a * (b - bp));
     }
     this.prev = [t, r, g, b];
-    if (this.hr === null && this.n >= TIMEOUT_SEC * FS && (this.run === 0 || this.n >= this.r.length)) this.failed = true;
+  }
+
+  // doubles every per-sample array, keeping the data
+  grow() {
+    for (const k of ['r', 'g', 'b', 'q', 'num', 'den']) {
+      const a = new Float64Array(this[k].length * 2);
+      if (k === 'q') a.fill(NaN);
+      a.set(this[k]);
+      this[k] = a;
+    }
   }
 
   addSample(r, g, b) {
+    if (this.n === this.r.length) this.grow();
     const i = this.n++;
     this.r[i] = r; this.g[i] = g; this.b[i] = b;
     const win = WIN_SEC * FS, step = STEP_SEC * FS, block = BLOCK_SEC * FS;
     if (this.n < win || this.n % step !== 0) return;
-    // Bounds follow the data every step until the first 30 s are collected, then once per 30 s
-    if (this.n < block || this.n % block === 0) this.refreshBounds();
+    // Once a green run is going, everything before it is ignored: bounds and filters see only the run
+    // (rounded up to the 0.5 s grid; at least the 3 s SNR window). Without a run: the recent history.
+    const from = this.runStart < 0 ? 0 : Math.min(Math.ceil(this.runStart / step) * step, this.n - win);
+    // Bounds follow the data every step until 30 s are collected, then once per 30 s
+    if (this.n - from < block || this.n - this.boundsAt >= block) this.refreshBounds(from);
     // Every 0.5 s: SNR of the last 3 s, merged into all its samples as in full_refine (single windows flicker)
-    const base = this.filtered(this.n - BUF_SEC * FS, this.n);
+    const base = this.filtered(Math.max(from, this.n - BUF_SEC * FS), this.n);
     const [snr, freq] = snrAndFreq(base.subarray(base.length - win));
     for (let k = 0, i0 = this.n - win; k < win; k++) {
       this.num[i0 + k] += snr * this.hann[k];
@@ -233,8 +249,9 @@ class PpgMeter {
     this.updateRun();
   }
 
-  refreshBounds() {
-    const s = Math.max(0, this.n - BLOCK_SEC * FS);
+  refreshBounds(from) {
+    this.boundsAt = this.n;
+    const s = Math.max(from, this.n - BLOCK_SEC * FS);
     const pos = posProjection(this.r.subarray(s, this.n), this.g.subarray(s, this.n), this.b.subarray(s, this.n));
     this.b1 = bounds(pos, 20, 80);
     this.b2 = bounds(detrend(clip(pos, this.b1)), 3, 97);
@@ -264,6 +281,8 @@ class PpgMeter {
     this.badSec = (this.n - 1 - lastGood) / FS;  // time since the last good sample (or since the start)
     const alive = lastGood >= 0 && this.n - 1 - lastGood <= MAX_GAP_SEC * FS;
     this.run = alive ? good / FS : 0;
+    this.runStart = alive ? start : -1;
+    if (this.badSec >= FAIL_SEC) this.failed = true;
     // a reset needs a gap > 1.5 s, i.e. several steps with run = 0, so a new run always starts from 0
     this.shown = this.run === 0 ? 0 : Math.max(this.shown, this.run);
     this.green = this.q[this.n - 1] >= this.thr;
@@ -283,4 +302,4 @@ class PpgMeter {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { PpgMeter, FS, SNR_THR, MIN_RUN_SEC, TIMEOUT_SEC, BUF_SEC };
+if (typeof module !== 'undefined') module.exports = { PpgMeter, FS, SNR_THR, MIN_RUN_SEC, FAIL_SEC, BUF_SEC };
