@@ -294,7 +294,8 @@ class PpgMeter {
 
   // Processed signal of the last BUF_SEC and its Gaussian-smoothed version scaled to the same spread (as full_refine)
   plotSignals() {
-    const sig = this.filtered(this.n - BUF_SEC * FS, this.n);
+    // 1 s more than the plot shows: the drawn view lags the newest sample and must still reach the left edge
+    const sig = this.filtered(this.n - (BUF_SEC + 1) * FS, this.n);
     const hz = this.hr !== null ? this.hr / 60 : (this.freq || 1.25);
     const sm = gaussSmooth(sig, FS / hz / 6);
     const k = std(sig) / (std(sm) || 1);
