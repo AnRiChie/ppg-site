@@ -12,20 +12,28 @@
   * { box-sizing: border-box; }
   /* the page is pinned to one screen: fixed rows, nothing scrolls or shifts with text length */
   html, body { height: 100%; overflow: hidden; }
-  body { margin: 0; position: fixed; inset: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; }
+  body { margin: 0; position: fixed; inset: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; transition: color 1s; }
   main {
+    position: relative; z-index: 1;
     height: 100%; max-width: 480px; margin: 0 auto; padding: 16px;
     display: grid; grid-template-rows: auto 64px 3em minmax(120px, 1fr) auto; justify-items: center; align-items: center; gap: 8px;
+    grid-template-columns: 100%;  /* the full-width plot overflows both sides instead of widening the column */
   }
-  .cam { position: relative; width: min(60vw, 34dvh, 260px); aspect-ratio: 1; }
-  .cam video { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; background: var(--muted); }
-  /* the ring lies on the video's own edge: no track, no gap */
-  .cam svg { position: absolute; inset: 0; transform: rotate(-90deg); }
-  #ring { fill: none; stroke: var(--good); stroke-width: 5; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  /* camera inside the logo ring; geometry in the 300x300 units of the reference logo:
+     ring radii 95-123, the video reaches just under the ring's inner edge */
+  .cam { position: relative; width: min(72vw, 40dvh, 320px); aspect-ratio: 1; }
+  .cam video {
+    position: absolute; inset: 17.5%; width: 65%; height: 65%; border-radius: 50%; object-fit: cover; background: var(--muted);
+    transition: opacity .6s;
+  }
+  #logo { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  #ring { fill: none; stroke: var(--good); stroke-width: 28; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  #check { fill: var(--good); }
+  #ring, #check { transition: stroke 1.2s ease .4s, fill 1.2s ease .4s; }
   #count {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: #fff; font-size: calc(min(60vw, 34dvh, 260px) * 0.2); font-weight: 700; font-variant-numeric: tabular-nums;
-    text-shadow: 0 0 8px rgba(0, 0, 0, .6);
+    color: #fff; font-size: calc(min(72vw, 40dvh, 320px) * 0.13); font-weight: 700; font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 8px rgba(0, 0, 0, .6); transition: opacity .2s;
   }
   #hr { font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; }
   #hr.live { color: var(--muted); }
@@ -33,10 +41,11 @@
     height: 3em; overflow: hidden; color: var(--muted); text-align: center; font-size: 15px; line-height: 1.5em;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
-  .plot { position: relative; width: 100%; height: 100%; }
-  .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* the plot runs from the left to the right edge of the screen */
+  .plot { position: relative; width: 100vw; height: 100%; }
+  .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity .5s; }
   /* aurora: low-res quality colours stretched and blurred, fading out at top and bottom only;
-     it overhangs the plot by AURORA_PX per side so it runs to the screen edges and the blur's own fade stays off-screen */
+     it overhangs the plot by AURORA_PX per side so the blur's own fade stays off-screen */
   #aurora {
     left: -48px; width: calc(100% + 96px);
     filter: blur(8px);
@@ -47,8 +56,7 @@
   button { font: inherit; padding: 12px 24px; border-radius: 24px; border: 2px solid var(--fg); background: var(--bg); color: var(--fg); }
   button.on { background: var(--fg); color: var(--bg); }
 
-  /* ---- finale (body.done): aurora floods the screen, the ring gets a drawn check and turns white ---- */
-  main { position: relative; z-index: 1; }
+  /* ---- finale (body.done): aurora floods the screen, the logo is drawn and turns white, results come in ---- */
   #glow { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
   #band { position: absolute; left: -15%; width: 130%; background: var(--good); filter: blur(32px); opacity: 0; }
   #sky {
@@ -59,26 +67,23 @@
       #21a038;
   }
   body.done #sky { opacity: 1; }
-  .cam video { transition: opacity .6s; }
-  body.done .cam video { opacity: 0; }
-  #check { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transform: none; }
-  #check path { fill: none; stroke: var(--good); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
-  #ring, #check path { transition: stroke 1.2s ease .4s; }
-  body.done #ring, body.done #check path { stroke: #fff; }
-  #count { transition: opacity .2s; }
-  body.done #count { opacity: 0; }
-  .plot canvas { transition: opacity .5s; }
-  body.done .plot canvas { opacity: 0; }
-  body { transition: color 1s; }
-  body.done, body.done #hr, body.done #msg { color: #fff; }
+  body.done .cam video, body.done #count, body.done .plot canvas { opacity: 0; }
+  body.done #ring { stroke: #fff; }
+  body.done #check { fill: #fff; }
+  body.done, body.done #msg { color: #fff; }
   body.done button { border-color: #fff; background: transparent; color: #fff; }
-  #done, #stats { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; }
-  #done { font-size: 64px; font-weight: 800; color: #fff; }
-  #stats { gap: 12px; }
+  #result { position: fixed; inset: 0; z-index: 2; pointer-events: none; color: #fff; }
+  /* #done and #hrbox are centred on --mid; `translate` composes with the animated `transform` */
+  #done, #hrbox { position: absolute; left: 0; right: 0; top: var(--mid, 50%); translate: 0 -50%; text-align: center; opacity: 0; }
+  #done { font-size: 64px; font-weight: 800; }
+  #hrbox span { display: block; font-size: 18px; opacity: .9; }
+  #hrbox b { display: block; font-size: 88px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
+  /* results on the border of the lower third of the screen */
+  #stats { position: absolute; left: 16px; right: 16px; top: 66.667%; display: flex; gap: 12px; }
   #stats div { flex: 1; text-align: center; opacity: 0; }
   #stats b { display: block; font-size: 30px; line-height: 1.2; }
   #stats span { font-size: 14px; opacity: .85; }
-  .spark { position: fixed; z-index: 2; pointer-events: none; transform: rotate(45deg); }
+  .spark { position: fixed; z-index: 3; pointer-events: none; transform: rotate(45deg); }
 </style>
 </head>
 <body>
@@ -86,30 +91,45 @@
 <main>
   <div class="cam">
     <video playsinline muted></video>
-    <!-- green ring: share of the clean signal collected for the HR -->
-    <svg viewBox="0 0 100 100">
-      <circle id="ring" cx="50" cy="50" r="47.5" pathLength="1"></circle>
+    <!-- the ring fills with the clean signal collected; at the end the check is drawn and the ring opens
+         where the check's long arm meets it. Coordinates are those of the 300x300 reference picture. -->
+    <svg id="logo" viewBox="0 0 300 300">
+      <defs>
+        <!-- the gap: a band parallel to the long arm, both ring ends are cut along it -->
+        <mask id="gapMask" maskUnits="userSpaceOnUse" x="-20" y="-20" width="340" height="340">
+          <rect x="-20" y="-20" width="340" height="340" fill="#fff"></rect>
+          <polygon id="gap" points="238,153 325,88 259,29 195,77" fill="#000" opacity="0"></polygon>
+        </mask>
+        <!-- a wide pen along the check's centre line reveals the check as if it were drawn -->
+        <mask id="penMask" maskUnits="userSpaceOnUse" x="-20" y="-20" width="340" height="340">
+          <polyline id="pen" points="96,130 150,164 262,80" fill="none" stroke="#fff" stroke-width="64"
+            stroke-miterlimit="10" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"></polyline>
+        </mask>
+      </defs>
+      <g mask="url(#gapMask)">
+        <circle id="ring" cx="150" cy="150" r="109" pathLength="1" transform="rotate(-90 150 150)"></circle>
+      </g>
+      <polygon id="check" points="104,118 150,147 247,75 261,97 260,100 150,181 104,152" mask="url(#penMask)"></polygon>
     </svg>
-    <!-- check mark drawn at the end; its long arm reaches out past the ring -->
-    <svg id="check" viewBox="0 0 100 100"><path d="M27 49 L45 66 L86 26" pathLength="1"></path></svg>
     <div id="count"></div>
   </div>
   <div id="hr"></div>
   <div id="msg">Закройте пальцем заднюю камеру и нажмите «Старт»</div>
-  <div class="plot">
-    <canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas>
-    <div id="done">Готово!</div>
-    <div id="stats">
-      <div><b id="sdnn"></b><span>SDNN, мс</span></div>
-      <div><b id="amo"></b><span>AMo, %</span></div>
-      <div><b id="cv"></b><span>CV, %</span></div>
-    </div>
-  </div>
+  <div class="plot"><canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas></div>
   <div class="buttons">
     <button id="start">Старт</button>
     <button id="torch" class="on" hidden>Вспышка</button>
   </div>
 </main>
+<div id="result">
+  <div id="done">Готово!</div>
+  <div id="hrbox"><span>ЧСС</span><b id="hrval"></b><span>уд/мин</span></div>
+  <div id="stats">
+    <div><b id="sdnn"></b><span>SDNN, мс</span></div>
+    <div><b id="amo"></b><span>AMo, %</span></div>
+    <div><b id="cv"></b><span>CV, %</span></div>
+  </div>
+</div>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
 <script src="ppg.js?v=5"></script>
 <script>
@@ -126,11 +146,13 @@ const gctx = grab.getContext('2d', { willReadFrequently: true });
 let stream = null, meter = null;
 
 const cam = document.querySelector('.cam'), band = document.getElementById('band');
-const checkPath = document.querySelector('#check path'), doneEl = document.getElementById('done');
-const statsEl = document.getElementById('stats'), statItems = [...statsEl.children];
+const pen = document.getElementById('pen'), gap = document.getElementById('gap');
+const resultEl = document.getElementById('result'), doneEl = document.getElementById('done'), hrBox = document.getElementById('hrbox');
+const statItems = [...document.getElementById('stats').children];
 
-// Finale, ms from the moment the HR is ready: check drawn 150-750, pop 750-1250, sparkles + "Готово!" from 850,
-// "Готово!" leaves at 2600, HR and SDNN / AMo / CV come in from 2900. Aurora and colours run alongside via CSS.
+// Finale, ms from the moment the HR is ready: check drawn 150-800 (the ring opens at ~600, when the long arm
+// reaches it), pop 800-1300, sparkles + "Готово!" from 900, "Готово!" leaves at 2600,
+// HR and SDNN / AMo / CV come in from 2900. Aurora and colours run alongside via CSS.
 function finish() {
   setRing(1);
   hrEl.textContent = msgEl.textContent = '';
@@ -141,32 +163,34 @@ function finish() {
   band.animate([{ opacity: 0.9, transform: 'scaleY(1)' }, { opacity: 1, transform: `scaleY(${fill})` }],
     { duration: 1400, easing: 'cubic-bezier(.45, 0, .2, 1)', fill: 'forwards' });
   document.body.classList.add('done');
-  checkPath.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }],
-    { duration: 600, delay: 150, easing: 'cubic-bezier(.65, 0, .35, 1)', fill: 'forwards' });
+  // the pen is 82% along the check when the long arm crosses the ring's inner edge: ~70% of the time with this easing
+  pen.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }],
+    { duration: 650, delay: 150, easing: 'cubic-bezier(.42, 0, .58, 1)', fill: 'forwards' });
+  gap.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, delay: 600, fill: 'forwards' });
   cam.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(1)' }],
-    { duration: 500, delay: 750, easing: 'ease-in-out' });
-  setTimeout(sparkles, 850);
+    { duration: 500, delay: 800, easing: 'ease-in-out' });
+  setTimeout(sparkles, 900);
+  // "Готово!" and the HR share the point halfway between the logo and the results line (2/3 of the screen)
+  resultEl.style.setProperty('--mid', (cam.getBoundingClientRect().bottom + innerHeight * 2 / 3) / 2 + 'px');
   doneEl.animate([
     { opacity: 0, transform: 'scale(1.6)' },
     { opacity: 1, transform: 'scale(0.94)', offset: 0.7 },
     { opacity: 1, transform: 'scale(1)' },
-  ], { duration: 700, delay: 850, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
+  ], { duration: 700, delay: 900, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
   doneEl.animate([{ opacity: 1 }, { opacity: 0, transform: 'scale(0.9)' }], { duration: 300, delay: 2600, fill: 'forwards' });
   const h = meter.hrv, fmt = (v, d) => (h ? v.toFixed(d) : '—');
+  document.getElementById('hrval').textContent = Math.round(meter.hr);
   document.getElementById('sdnn').textContent = fmt(h && h.sdnn, 0);
   document.getElementById('amo').textContent = fmt(h && h.amo * 100, 0);
   document.getElementById('cv').textContent = fmt(h && h.cv, 1);
-  hrEl.classList.remove('live');
   const rise = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }];
-  setTimeout(() => { hrEl.textContent = Math.round(meter.hr) + ' уд/мин'; }, 2900);
-  hrEl.animate(rise, { duration: 500, delay: 2900, easing: 'ease-out', fill: 'backwards' });
-  statsEl.style.opacity = 1;
-  statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 3050 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
+  hrBox.animate(rise, { duration: 500, delay: 2900, easing: 'ease-out', fill: 'forwards' });
+  statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 3100 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
 }
 
 // small dark green and white diamonds flying out of the ring
 function sparkles() {
-  const r = cam.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width / 2;
+  const r = cam.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width * 0.41;
   for (let k = 0; k < 36; k++) {
     const a = Math.random() * 2 * Math.PI, dist = 70 + Math.random() * 150, size = 3 + Math.random() * 5;
     const s = document.createElement('div');
@@ -186,8 +210,7 @@ function sparkles() {
 // back to the measuring screen
 function resetFinale() {
   document.body.classList.remove('done');
-  [band, checkPath, cam, doneEl, hrEl, ...statItems].forEach(el => el.getAnimations().forEach(a => a.cancel()));
-  statsEl.style.opacity = 0;
+  [band, pen, gap, cam, doneEl, hrBox, ...statItems].forEach(el => el.getAnimations().forEach(a => a.cancel()));
   document.querySelectorAll('.spark').forEach(s => s.remove());
 }
 
@@ -229,10 +252,11 @@ function setTorch(on) {
   if (stream && !torchBtn.hidden) stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: on }] }).catch(() => {});
 }
 
-// p in 0..1; an empty ring is hidden so the round cap doesn't leave a dot. Also the countdown in the camera.
+// p in 0..1; an empty ring is hidden so nothing shows at zero. Also the countdown in the camera.
 function setRing(p) {
   p = Math.min(1, p);
   ring.style.strokeDashoffset = 1 - p;
+  ring.style.strokeDasharray = p >= 1 ? 'none' : '';  // a full dash still leaves a hairline seam at its start
   ring.style.opacity = p > 0 ? 1 : 0;
   countEl.textContent = (MIN_RUN_SEC * (1 - p)).toFixed(2);
 }
