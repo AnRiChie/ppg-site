@@ -29,6 +29,9 @@
   #logo { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
   #ring { fill: none; stroke: var(--good); stroke-width: 15; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
   #check { fill: var(--good); }
+  /* the gap band is squeezed to zero width across the long arm (whose centre line is the band's middle,
+     at -36.6deg), so the ring ends part sideways from that line when it opens */
+  #gap { transform-box: view-box; transform-origin: 238.3px 98.4px; transform: rotate(-36.6deg) scaleY(0) rotate(36.6deg); }
   #ring, #check { transition: stroke 1.2s ease .4s, fill 1.2s ease .4s; }
   #count {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -98,7 +101,7 @@
         <!-- the gap: a band parallel to the long arm, both ring ends are cut along it -->
         <mask id="gapMask" maskUnits="userSpaceOnUse" x="-20" y="-20" width="340" height="340">
           <rect x="-20" y="-20" width="340" height="340" fill="#fff"></rect>
-          <polygon id="gap" points="238,153 325,88 259,29 195,77" fill="#000" opacity="0"></polygon>
+          <polygon id="gap" points="238,153 325,88 259,29 195,77" fill="#000"></polygon>
         </mask>
         <!-- a wide pen along the check's centre line reveals the check as if it were drawn -->
         <mask id="penMask" maskUnits="userSpaceOnUse" x="-20" y="-20" width="340" height="340">
@@ -171,7 +174,10 @@ function finish() {
   // the pen is 82% along the check when the long arm crosses the ring's inner edge: ~70% of the time with this easing
   pen.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }],
     { duration: 650, delay: 150, easing: 'cubic-bezier(.42, 0, .58, 1)', fill: 'forwards' });
-  gap.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, delay: 600, fill: 'forwards' });
+  gap.animate([
+    { transform: 'rotate(-36.6deg) scaleY(0) rotate(36.6deg)' },
+    { transform: 'rotate(-36.6deg) scaleY(1) rotate(36.6deg)' },
+  ], { duration: 350, delay: 580, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
   cam.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(1)' }],
     { duration: 500, delay: 800, easing: 'ease-in-out' });
   setTimeout(sparkles, 900);
@@ -231,9 +237,11 @@ function setMsg(text) {
   }, () => {});
 }
 
-// finger on the lens with the flash on: the picture is mostly red
-const fingerOn = (r, g, b) => r > 40 && r > 1.6 * Math.max(g, b);
+// finger on the lens with the flash on: the picture is mostly red. Once recording, the finger counts as
+// taken away only below 90% of that ratio, so a borderline picture doesn't flip back and forth.
+const fingerOn = (r, g, b, k = 1) => r > 40 && r > 1.6 * k * Math.max(g, b);
 let fingerAt = 0;  // when the finger was detected and the recording started, ms
+let offFrames = 0; // consecutive frames without the finger while recording
 
 async function start() {
   stop();
@@ -316,7 +324,18 @@ function onFrame(now, meta) {
     if (!fingerOn(r, g, b)) { nextFrame(); return; }
     meter = new PpgMeter();
     fingerAt = now;
-  }
+    offFrames = 0;
+  } else if (!fingerOn(r, g, b, 0.9) && ++offFrames >= 5) {
+    // finger taken away (5 frames, ~0.17 s, so one odd frame doesn't count): drop the recording and wait again
+    meter = null;
+    shown = display = lastNow = 0;
+    setRing(0);
+    hrEl.textContent = '';
+    draw();
+    setMsg('Приложите палец к камере');
+    nextFrame();
+    return;
+  } else if (fingerOn(r, g, b, 0.9)) offFrames = 0;
   // captureTime is the real camera timestamp (Chrome); fall back to callback time
   meter.push(((meta && meta.captureTime) || now) / 1000, r, g, b);
   draw();
