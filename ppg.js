@@ -5,11 +5,11 @@ const FS = 30;            // resampling rate, Hz (camera rate in the project)
 const WIN_SEC = 3.0;      // SNR window, as compute_windows_v2
 const STEP_SEC = 0.5;     // SNR window step
 const SNR_THR = 0.6;      // quality threshold, as full_refine
-const MIN_RUN_SEC = 15;   // continuous good signal needed for HR
-const MAX_GAP_SEC = 0.75; // bad gap allowed inside a run
+const MIN_RUN_SEC = 30;   // continuous good signal needed for HR (calculation interval)
+const MAX_GAP_SEC = 1.5;  // bad gap allowed inside a run
 const BUF_SEC = 10;       // history the filters see per call; also the plot length
 const BLOCK_SEC = 30;     // clipping bounds are refreshed from the last 30 s every 30 s
-const TIMEOUT_SEC = 90;   // give up after this
+const TIMEOUT_SEC = 90;   // give up after this, unless a good run is still going on
 
 function mean(a) {
   let s = 0;
@@ -143,7 +143,8 @@ function gaussSmooth(x, sigma) {
 
 class PpgMeter {
   constructor() {
-    const max = TIMEOUT_SEC * FS;
+    // room for a run that is still green at the timeout to reach MIN_RUN_SEC
+    const max = (TIMEOUT_SEC + MIN_RUN_SEC) * FS;
     this.r = new Float64Array(max); this.g = new Float64Array(max); this.b = new Float64Array(max);
     this.q = new Float64Array(max).fill(NaN);  // SNR per sample, NaN until its 0.5 s step is computed
     // merge_v2_snr_profile: each sample's SNR is the Hann-weighted mean of all 3 s windows covering it
@@ -172,7 +173,7 @@ class PpgMeter {
       this.addSample(rp + a * (r - rp), gp + a * (g - gp), bp + a * (b - bp));
     }
     this.prev = [t, r, g, b];
-    if (this.n >= this.r.length && this.hr === null) this.failed = true;
+    if (this.hr === null && this.n >= TIMEOUT_SEC * FS && (this.run === 0 || this.n >= this.r.length)) this.failed = true;
   }
 
   addSample(r, g, b) {

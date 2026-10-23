@@ -10,17 +10,32 @@
     :root { --bg: #000000; --fg: #f2f2f2; --muted: #999999; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; }
-  main { max-width: 480px; margin: 0 auto; padding: 24px 16px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
-  .cam { width: min(64vw, 260px); aspect-ratio: 1; border-radius: 50%; overflow: hidden; border: 3px solid var(--muted); }
-  video { width: 100%; height: 100%; object-fit: cover; display: block; }
-  #hr { font-size: 56px; font-weight: 700; min-height: 1.2em; }
-  #msg { color: var(--muted); text-align: center; min-height: 2.8em; }
-  /* stretched oval whose edge fades into the background */
-  canvas {
-    width: 100%; height: 200px;
-    -webkit-mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
-    mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
+  /* the page is pinned to one screen: fixed rows, nothing scrolls or shifts with text length */
+  html, body { height: 100%; overflow: hidden; }
+  body { margin: 0; position: fixed; inset: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; }
+  main {
+    height: 100%; max-width: 480px; margin: 0 auto; padding: 16px;
+    display: grid; grid-template-rows: auto 64px 3em minmax(120px, 1fr) auto; justify-items: center; align-items: center; gap: 8px;
+  }
+  .cam { position: relative; width: min(60vw, 34dvh, 260px); aspect-ratio: 1; }
+  .cam video { position: absolute; inset: 7%; width: 86%; height: 86%; border-radius: 50%; object-fit: cover; }
+  .cam svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .cam circle { fill: none; stroke-width: 4; }
+  #ring { stroke: var(--good); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .3s; }
+  #hr { font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; }
+  #msg {
+    height: 3em; overflow: hidden; color: var(--muted); text-align: center; font-size: 15px; line-height: 1.5em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .plot { position: relative; width: 100%; height: 100%; }
+  .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* aurora: low-res quality colours stretched and blurred, fading out at every edge */
+  #aurora {
+    filter: blur(8px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent), linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+    -webkit-mask-composite: source-in;
+    mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent), linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+    mask-composite: intersect;
   }
   .buttons { display: flex; gap: 12px; }
   button { font: inherit; padding: 12px 24px; border-radius: 24px; border: 2px solid var(--fg); background: var(--bg); color: var(--fg); }
@@ -29,20 +44,28 @@
 </head>
 <body>
 <main>
-  <div class="cam"><video playsinline muted></video></div>
+  <div class="cam">
+    <video playsinline muted></video>
+    <!-- green ring: share of the clean signal collected for the HR -->
+    <svg viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="47" stroke="var(--muted)" opacity="0.25"></circle>
+      <circle id="ring" cx="50" cy="50" r="47" pathLength="1"></circle>
+    </svg>
+  </div>
   <div id="hr"></div>
   <div id="msg">Закройте пальцем заднюю камеру и нажмите «Старт»</div>
-  <canvas id="plot"></canvas>
+  <div class="plot"><canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas></div>
   <div class="buttons">
     <button id="start">Старт</button>
     <button id="torch" class="on" hidden>Вспышка</button>
   </div>
 </main>
-<!-- bump ?v= after editing ppg.js: python http.server sends no cache headers, phones keep the old copy -->
-<script src="ppg.js?v=2"></script>
+<!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
+<script src="ppg.js?v=3"></script>
 <script>
 const video = document.querySelector('video');
-const plot = document.getElementById('plot');
+const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
+const ring = document.getElementById('ring');
 const hrEl = document.getElementById('hr'), msgEl = document.getElementById('msg');
 const startBtn = document.getElementById('start'), torchBtn = document.getElementById('torch');
 const grab = document.createElement('canvas');
@@ -53,6 +76,7 @@ let stream = null, meter = null;
 async function start() {
   stop();
   hrEl.textContent = '';
+  setRing(0);
   if (!navigator.mediaDevices) { msgEl.textContent = 'Камера доступна только по HTTPS или с localhost'; return; }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -84,6 +108,12 @@ function setTorch(on) {
   if (stream && !torchBtn.hidden) stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: on }] }).catch(() => {});
 }
 
+// p in 0..1; an empty ring is hidden so the round cap doesn't leave a dot
+function setRing(p) {
+  ring.style.strokeDashoffset = 1 - Math.min(1, p);
+  ring.style.opacity = p > 0 ? 1 : 0;
+}
+
 function nextFrame() {
   if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onFrame);
   else requestAnimationFrame(now => onFrame(now));
@@ -100,13 +130,16 @@ function onFrame(now, meta) {
   meter.push(((meta && meta.captureTime) || now) / 1000, r / px, g / px, b / px);
   draw();
   if (meter.hr !== null) {
+    setRing(1);
     hrEl.textContent = Math.round(meter.hr) + ' уд/мин';
     msgEl.textContent = 'Готово';
     stop();
   } else if (meter.failed) {
+    setRing(0);
     msgEl.textContent = `Не удалось набрать ${MIN_RUN_SEC} с чистого сигнала. Держите палец неподвижно и попробуйте ещё раз`;
     stop();
   } else {
+    setRing(meter.run / MIN_RUN_SEC);
     msgEl.textContent = `Чистый сигнал: ${meter.run.toFixed(1)} из ${MIN_RUN_SEC} с`;
     nextFrame();
   }
@@ -129,25 +162,20 @@ function draw() {
   const dpr = window.devicePixelRatio || 1;
   const w = plot.clientWidth * dpr, h = plot.clientHeight * dpr;
   if (plot.width !== w || plot.height !== h) { plot.width = w; plot.height = h; }
-  const ctx = plot.getContext('2d');
-  const bg = hexRgb('--bg'), bad = hexRgb('--bad'), good = hexRgb('--good');
-  ctx.fillStyle = `rgb(${bg})`;
-  ctx.fillRect(0, 0, w, h);
+  const ctx = plot.getContext('2d'), actx = aurora.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  actx.clearRect(0, 0, aurora.width, aurora.height);
   if (meter.b1 === null) return;
   const total = BUF_SEC * FS, [sig, smooth] = meter.plotSignals(), s0 = meter.n - sig.length;
-  // signal spans the middle 80% of the width so its newest end isn't lost in the faded edge
-  const x0 = 0.1 * w, xw = 0.8 * w;
-  const x = i => x0 + xw - (sig.length - i) * xw / total;
-  // Smooth colour transition between 0.5 s quality steps, as the gradient background in full_refine
-  const grad = ctx.createLinearGradient(0, 0, w, 0);
-  let stops = 0;
-  for (let i = 0; i < sig.length; i++) {
-    const q = meter.quality(s0 + i), off = x(i) / w;
-    if (Number.isNaN(q) || off < 0 || (s0 + i) % 15 !== 7) continue;  // one stop at the centre of each 0.5 s step
-    grad.addColorStop(off, qualityColor(q, bg, bad, good));
-    stops++;
+  const x = i => w - (sig.length - i) * w / total;
+  // Aurora: one low-res column per 1/64 of the plot, coloured by the quality of the sample under it
+  const bg = hexRgb('--bg'), bad = hexRgb('--bad'), good = hexRgb('--good');
+  for (let c = 0; c < aurora.width; c++) {
+    const q = meter.quality(meter.n - total + Math.floor((c + 0.5) * total / aurora.width));
+    if (!(q >= 0)) continue;  // NaN (not computed yet) or undefined (before the start)
+    actx.fillStyle = qualityColor(q, bg, bad, good);
+    actx.fillRect(c, 0, 1, aurora.height);
   }
-  if (stops) { ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h); }
   let min = Infinity, max = -Infinity;
   for (const v of sig) { min = Math.min(min, v); max = Math.max(max, v); }
   const y = v => h * 0.8 - (v - min) / (max - min || 1) * h * 0.6;
