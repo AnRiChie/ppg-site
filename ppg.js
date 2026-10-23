@@ -141,6 +141,38 @@ function gaussSmooth(x, sigma) {
   });
 }
 
+// full_refine step 5 peaks: Gaussian (sigma = period / 6), find_peaks(distance = 0.6 period, prominence = 0.25 std).
+// Peak times are refined with a parabola through 3 samples instead of full_refine's 15x upsampling.
+function findPeaks(x, hr) {
+  const period = FS * 60 / hr, sm = gaussSmooth(x, period / 6), minProm = 0.25 * std(sm), dist = 0.6 * period;
+  const peaks = [];
+  for (let i = 1; i < sm.length - 1; i++) {
+    if (!(sm[i] > sm[i - 1] && sm[i] >= sm[i + 1])) continue;
+    // prominence over one period on each side: height above the higher of the two side minima
+    let lo = Infinity, hi = Infinity;
+    for (let k = Math.max(0, Math.round(i - period)); k < i; k++) lo = Math.min(lo, sm[k]);
+    for (let k = i + 1; k <= Math.min(sm.length - 1, Math.round(i + period)); k++) hi = Math.min(hi, sm[k]);
+    if (sm[i] - Math.max(lo, hi) < minProm) continue;
+    const den = sm[i - 1] - 2 * sm[i] + sm[i + 1];
+    const t = i + (den ? 0.5 * (sm[i - 1] - sm[i + 1]) / den : 0);
+    const last = peaks[peaks.length - 1];
+    if (last && t - last.t < dist) { if (sm[i] > last.v) peaks[peaks.length - 1] = { t, v: sm[i] }; }
+    else peaks.push({ t, v: sm[i] });
+  }
+  return peaks.map(p => p.t);
+}
+
+// analysis.compute_hrv_metrics: SDNN (ms, ddof=1), CV (%), AMo (share of intervals in the modal 50 ms bin)
+function hrv(x, hr) {
+  const peaks = findPeaks(x, hr);
+  if (peaks.length < 3) return null;
+  const rr = peaks.slice(1).map((t, k) => (t - peaks[k]) / FS * 1000);
+  const m = mean(rr), sdnn = Math.sqrt(rr.reduce((a, v) => a + (v - m) ** 2, 0) / (rr.length - 1));
+  const lo = Math.min(...rr) - 25, counts = {};
+  for (const v of rr) { const b = Math.floor((v - lo) / 50); counts[b] = (counts[b] || 0) + 1; }
+  return { sdnn, cv: sdnn / m * 100, amo: Math.max(...Object.values(counts)) / rr.length, beats: peaks.length };
+}
+
 class PpgMeter {
   constructor() {
     // room for a run that is still green at the timeout to reach MIN_RUN_SEC
@@ -161,6 +193,7 @@ class PpgMeter {
     this.green = false; // the newest 0.5 s step is good
     this.liveHr = null; // HR over the current, still growing run (expanding window, as compute_expanding_hr_curve)
     this.hr = null;
+    this.hrv = null;    // { sdnn, cv, amo, beats } over the final run, null if too few beats
     this.failed = false;
   }
 
@@ -233,7 +266,7 @@ class PpgMeter {
     this.green = this.q[this.n - 1] >= this.thr;
     if (!alive || (lastGood + 1 - start) / FS < WIN_SEC) { this.liveHr = null; return; }
     const seg = this.filtered(start, lastGood + 1);
-    if (this.shown >= this.minRun) this.hr = hrCzt(seg);
+    if (this.shown >= this.minRun) { this.hr = hrCzt(seg); this.hrv = hrv(seg, this.hr); }
     else this.liveHr = hrCzt(seg, 550);  // 0.005 Hz grid: cheap enough for every 0.5 s on a phone
   }
 

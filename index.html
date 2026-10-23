@@ -46,9 +46,43 @@
   .buttons { display: flex; gap: 12px; }
   button { font: inherit; padding: 12px 24px; border-radius: 24px; border: 2px solid var(--fg); background: var(--bg); color: var(--fg); }
   button.on { background: var(--fg); color: var(--bg); }
+
+  /* ---- finale (body.done): aurora floods the screen, the ring gets a drawn check and turns white ---- */
+  main { position: relative; z-index: 1; }
+  #glow { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  #band { position: absolute; left: -15%; width: 130%; background: var(--good); filter: blur(32px); opacity: 0; }
+  #sky {
+    position: absolute; inset: 0; opacity: 0; transition: opacity 1.4s ease .7s;
+    background:
+      radial-gradient(120% 80% at 0% 0%, #1e8fe0 0%, rgba(30, 143, 224, 0) 60%),
+      radial-gradient(120% 80% at 0% 100%, #e8e43a 0%, rgba(232, 228, 58, 0) 60%),
+      #21a038;
+  }
+  body.done #sky { opacity: 1; }
+  .cam video { transition: opacity .6s; }
+  body.done .cam video { opacity: 0; }
+  #check { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transform: none; }
+  #check path { fill: none; stroke: var(--good); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  #ring, #check path { transition: stroke 1.2s ease .4s; }
+  body.done #ring, body.done #check path { stroke: #fff; }
+  #count { transition: opacity .2s; }
+  body.done #count { opacity: 0; }
+  .plot canvas { transition: opacity .5s; }
+  body.done .plot canvas { opacity: 0; }
+  body { transition: color 1s; }
+  body.done, body.done #hr, body.done #msg { color: #fff; }
+  body.done button { border-color: #fff; background: transparent; color: #fff; }
+  #done, #stats { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; }
+  #done { font-size: 64px; font-weight: 800; color: #fff; }
+  #stats { gap: 12px; }
+  #stats div { flex: 1; text-align: center; opacity: 0; }
+  #stats b { display: block; font-size: 30px; line-height: 1.2; }
+  #stats span { font-size: 14px; opacity: .85; }
+  .spark { position: fixed; z-index: 2; pointer-events: none; transform: rotate(45deg); }
 </style>
 </head>
 <body>
+<div id="glow"><div id="band"></div><div id="sky"></div></div>
 <main>
   <div class="cam">
     <video playsinline muted></video>
@@ -56,18 +90,28 @@
     <svg viewBox="0 0 100 100">
       <circle id="ring" cx="50" cy="50" r="47.5" pathLength="1"></circle>
     </svg>
+    <!-- check mark drawn at the end; its long arm reaches out past the ring -->
+    <svg id="check" viewBox="0 0 100 100"><path d="M27 49 L45 66 L86 26" pathLength="1"></path></svg>
     <div id="count"></div>
   </div>
   <div id="hr"></div>
   <div id="msg">Закройте пальцем заднюю камеру и нажмите «Старт»</div>
-  <div class="plot"><canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas></div>
+  <div class="plot">
+    <canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas>
+    <div id="done">Готово!</div>
+    <div id="stats">
+      <div><b id="sdnn"></b><span>SDNN, мс</span></div>
+      <div><b id="amo"></b><span>AMo, %</span></div>
+      <div><b id="cv"></b><span>CV, %</span></div>
+    </div>
+  </div>
   <div class="buttons">
     <button id="start">Старт</button>
     <button id="torch" class="on" hidden>Вспышка</button>
   </div>
 </main>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
-<script src="ppg.js?v=4"></script>
+<script src="ppg.js?v=5"></script>
 <script>
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
@@ -81,9 +125,77 @@ grab.width = 80; grab.height = 60;
 const gctx = grab.getContext('2d', { willReadFrequently: true });
 let stream = null, meter = null;
 
+const cam = document.querySelector('.cam'), band = document.getElementById('band');
+const checkPath = document.querySelector('#check path'), doneEl = document.getElementById('done');
+const statsEl = document.getElementById('stats'), statItems = [...statsEl.children];
+
+// Finale, ms from the moment the HR is ready: check drawn 150-750, pop 750-1250, sparkles + "Готово!" from 850,
+// "Готово!" leaves at 2600, HR and SDNN / AMo / CV come in from 2900. Aurora and colours run alongside via CSS.
+function finish() {
+  setRing(1);
+  hrEl.textContent = msgEl.textContent = '';
+  const box = document.querySelector('.plot').getBoundingClientRect();
+  band.style.top = box.top + 'px';
+  band.style.height = box.height + 'px';
+  const fill = 2.4 * innerHeight / box.height;  // tall enough to cover the screen from any band position
+  band.animate([{ opacity: 0.9, transform: 'scaleY(1)' }, { opacity: 1, transform: `scaleY(${fill})` }],
+    { duration: 1400, easing: 'cubic-bezier(.45, 0, .2, 1)', fill: 'forwards' });
+  document.body.classList.add('done');
+  checkPath.animate([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }],
+    { duration: 600, delay: 150, easing: 'cubic-bezier(.65, 0, .35, 1)', fill: 'forwards' });
+  cam.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(1)' }],
+    { duration: 500, delay: 750, easing: 'ease-in-out' });
+  setTimeout(sparkles, 850);
+  doneEl.animate([
+    { opacity: 0, transform: 'scale(1.6)' },
+    { opacity: 1, transform: 'scale(0.94)', offset: 0.7 },
+    { opacity: 1, transform: 'scale(1)' },
+  ], { duration: 700, delay: 850, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
+  doneEl.animate([{ opacity: 1 }, { opacity: 0, transform: 'scale(0.9)' }], { duration: 300, delay: 2600, fill: 'forwards' });
+  const h = meter.hrv, fmt = (v, d) => (h ? v.toFixed(d) : '—');
+  document.getElementById('sdnn').textContent = fmt(h && h.sdnn, 0);
+  document.getElementById('amo').textContent = fmt(h && h.amo * 100, 0);
+  document.getElementById('cv').textContent = fmt(h && h.cv, 1);
+  hrEl.classList.remove('live');
+  const rise = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }];
+  setTimeout(() => { hrEl.textContent = Math.round(meter.hr) + ' уд/мин'; }, 2900);
+  hrEl.animate(rise, { duration: 500, delay: 2900, easing: 'ease-out', fill: 'backwards' });
+  statsEl.style.opacity = 1;
+  statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 3050 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
+}
+
+// small dark green and white diamonds flying out of the ring
+function sparkles() {
+  const r = cam.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width / 2;
+  for (let k = 0; k < 36; k++) {
+    const a = Math.random() * 2 * Math.PI, dist = 70 + Math.random() * 150, size = 3 + Math.random() * 5;
+    const s = document.createElement('div');
+    s.className = 'spark';
+    Object.assign(s.style, {
+      left: cx + Math.cos(a) * rad - size / 2 + 'px', top: cy + Math.sin(a) * rad - size / 2 + 'px',
+      width: size + 'px', height: size + 'px', background: k % 2 ? '#fff' : '#0b5d1e',
+    });
+    document.body.appendChild(s);
+    s.animate([
+      { transform: 'rotate(45deg) scale(1)', opacity: 1 },
+      { transform: `translate(${Math.cos(a) * dist}px, ${Math.sin(a) * dist}px) rotate(225deg) scale(0.3)`, opacity: 0 },
+    ], { duration: 900 + Math.random() * 600, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' }).finished.then(() => s.remove(), () => s.remove());
+  }
+}
+
+// back to the measuring screen
+function resetFinale() {
+  document.body.classList.remove('done');
+  [band, checkPath, cam, doneEl, hrEl, ...statItems].forEach(el => el.getAnimations().forEach(a => a.cancel()));
+  statsEl.style.opacity = 0;
+  document.querySelectorAll('.spark').forEach(s => s.remove());
+}
+
 async function start() {
   stop();
+  resetFinale();
   hrEl.textContent = '';
+  msgEl.textContent = '';
   shown = display = lastNow = 0;
   setRing(0);
   if (!navigator.mediaDevices) { msgEl.textContent = 'Камера доступна только по HTTPS или с localhost'; return; }
@@ -156,11 +268,8 @@ function onFrame(now, meta) {
   meter.push(((meta && meta.captureTime) || now) / 1000, r / px, g / px, b / px);
   draw();
   if (meter.hr !== null) {
-    setRing(1);
-    hrEl.classList.remove('live');
-    hrEl.textContent = Math.round(meter.hr) + ' уд/мин';
-    msgEl.textContent = 'Готово';
     stop();
+    finish();
   } else if (meter.failed) {
     setRing(0);
     hrEl.textContent = '';
