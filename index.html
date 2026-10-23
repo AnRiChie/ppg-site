@@ -161,20 +161,20 @@ const resultEl = document.getElementById('result'), doneEl = document.getElement
 const statItems = [...document.getElementById('stats').children];
 
 // Finale, ms from the moment the HR is ready: the flood reaches the full thin ring and it turns white (CSS);
-// check drawn 650-1100, its long arm breaks the ring at ~1020; 1020-1420 the thin ring runs away from the break,
-// from the gap's upper edge counter-clockwise round to its lower edge; 1420-2000 the logo-width ring grows from
-// the lower edge clockwise round to the upper one; pop 1950-2450, sparkles + "Готово!" from 2000,
+// check drawn 650-1100, its long arm breaks the ring at ~1020; 1020-1420 the thin ring is wiped from the gap's
+// lower edge clockwise round to its upper edge; 1420-2000 the logo-width ring grows the same way, from the lower
+// edge clockwise round to the upper one; pop 1950-2450, sparkles + "Готово!" from 2000,
 // "Готово!" leaves at 3700, HR and CV / AMo / RMSSD from 4000.
 const ARM = 0.165;  // where the long arm crosses the ring, share of the turn clockwise from the top
 function finish() {
   setRing(1);
   hrEl.textContent = '';
   setMsg('');
-  // pathLength is 1: dash "len 1-len" starting at -offset; "1 0" is the full ring. Both dashes start
-  // inside the gap, so only the moving end shows.
+  // pathLength is 1: dash "len 1-len" starting at -offset; "1 0" is the full ring. Both dashes have their
+  // fixed end inside the gap, so only the moving end shows: the thin ring's start runs a full turn clockwise.
   ring.animate([
     { strokeDasharray: '1 0', strokeDashoffset: -ARM },
-    { strokeDasharray: '0 1', strokeDashoffset: -ARM },
+    { strokeDasharray: '0 1', strokeDashoffset: -ARM - 1 },
   ], { duration: 400, delay: 1020, easing: 'cubic-bezier(.45, 0, .55, 1)', fill: 'forwards' });
   ring.animate([
     { r: '109px', strokeWidth: '28px', strokeDasharray: '0 1', strokeDashoffset: -ARM },
