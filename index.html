@@ -19,15 +19,15 @@
     display: grid; grid-template-rows: auto 64px 3em minmax(120px, 1fr) auto; justify-items: center; align-items: center; gap: 8px;
     grid-template-columns: 100%;  /* the full-width plot overflows both sides instead of widening the column */
   }
-  /* camera inside the logo ring; geometry in the 300x300 units of the reference logo:
-     ring radii 95-123, the video reaches just under the ring's inner edge */
+  /* geometry in the 300x300 units of the reference logo. While measuring: a thin round-capped ring
+     (r 142.5, width 15) with the camera just under its inner edge; at the end it grows into the logo ring (radii 95-123) */
   .cam { position: relative; width: min(72vw, 40dvh, 320px); aspect-ratio: 1; }
-  .cam video {
-    position: absolute; inset: 17.5%; width: 65%; height: 65%; border-radius: 50%; object-fit: cover; background: var(--muted);
-    transition: opacity .6s;
-  }
+  /* the video is scaled up inside a clipping circle: phone camera frames can carry padded edge rows,
+     which showed as thin light lines at the right and bottom */
+  .lens { position: absolute; inset: 4.5%; border-radius: 50%; overflow: hidden; background: var(--muted); transform: translateZ(0); transition: opacity .6s; }
+  .lens video { display: block; width: 100%; height: 100%; object-fit: cover; transform: scale(1.08); }
   #logo { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-  #ring { fill: none; stroke: var(--good); stroke-width: 28; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  #ring { fill: none; stroke: var(--good); stroke-width: 15; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
   #check { fill: var(--good); }
   #ring, #check { transition: stroke 1.2s ease .4s, fill 1.2s ease .4s; }
   #count {
@@ -67,7 +67,7 @@
       #21a038;
   }
   body.done #sky { opacity: 1; }
-  body.done .cam video, body.done #count, body.done .plot canvas { opacity: 0; }
+  body.done .lens, body.done #count, body.done .plot canvas { opacity: 0; }
   body.done #ring { stroke: #fff; }
   body.done #check { fill: #fff; }
   body.done, body.done #msg { color: #fff; }
@@ -90,7 +90,7 @@
 <div id="glow"><div id="band"></div><div id="sky"></div></div>
 <main>
   <div class="cam">
-    <video playsinline muted></video>
+    <div class="lens"><video playsinline muted></video></div>
     <!-- the ring fills with the clean signal collected; at the end the check is drawn and the ring opens
          where the check's long arm meets it. Coordinates are those of the 300x300 reference picture. -->
     <svg id="logo" viewBox="0 0 300 300">
@@ -107,14 +107,15 @@
         </mask>
       </defs>
       <g mask="url(#gapMask)">
-        <circle id="ring" cx="150" cy="150" r="109" pathLength="1" transform="rotate(-90 150 150)"></circle>
+        <circle id="ring" cx="150" cy="150" r="142.5" pathLength="1" transform="rotate(-90 150 150)"></circle>
       </g>
-      <polygon id="check" points="104,118 150,147 247,75 261,97 260,100 150,181 104,152" mask="url(#penMask)"></polygon>
+      <!-- the long arm's edges run out to the ring's outer circle (r 123) and its tip follows that circle -->
+      <path id="check" d="M104 118 L150 147 L247.3 74.8 A123 123 0 0 1 261.7 98.7 L150 181 L104 152 Z" mask="url(#penMask)"></path>
     </svg>
     <div id="count"></div>
   </div>
   <div id="hr"></div>
-  <div id="msg">Закройте пальцем заднюю камеру и нажмите «Старт»</div>
+  <div id="msg">Приложите палец к камере и нажмите «Старт»</div>
   <div class="plot"><canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas></div>
   <div class="buttons">
     <button id="start">Старт</button>
@@ -125,13 +126,13 @@
   <div id="done">Готово!</div>
   <div id="hrbox"><span>ЧСС</span><b id="hrval"></b><span>уд/мин</span></div>
   <div id="stats">
-    <div><b id="sdnn"></b><span>SDNN, мс</span></div>
-    <div><b id="amo"></b><span>AMo, %</span></div>
     <div><b id="cv"></b><span>CV, %</span></div>
+    <div><b id="amo"></b><span>AMo, %</span></div>
+    <div><b id="rmssd"></b><span>RMSSD, мс</span></div>
   </div>
 </div>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
-<script src="ppg.js?v=5"></script>
+<script src="ppg.js?v=6"></script>
 <script>
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
@@ -155,7 +156,11 @@ const statItems = [...document.getElementById('stats').children];
 // HR and SDNN / AMo / CV come in from 2900. Aurora and colours run alongside via CSS.
 function finish() {
   setRing(1);
-  hrEl.textContent = msgEl.textContent = '';
+  hrEl.textContent = '';
+  setMsg('');
+  // the thin measuring ring grows into the logo ring before the check reaches it
+  ring.animate([{ r: '142.5px', strokeWidth: '15px' }, { r: '109px', strokeWidth: '28px' }],
+    { duration: 500, easing: 'cubic-bezier(.45, 0, .2, 1)', fill: 'forwards' });
   const box = document.querySelector('.plot').getBoundingClientRect();
   band.style.top = box.top + 'px';
   band.style.height = box.height + 'px';
@@ -180,9 +185,9 @@ function finish() {
   doneEl.animate([{ opacity: 1 }, { opacity: 0, transform: 'scale(0.9)' }], { duration: 300, delay: 2600, fill: 'forwards' });
   const h = meter.hrv, fmt = (v, d) => (h ? v.toFixed(d) : '—');
   document.getElementById('hrval').textContent = Math.round(meter.hr);
-  document.getElementById('sdnn').textContent = fmt(h && h.sdnn, 0);
-  document.getElementById('amo').textContent = fmt(h && h.amo * 100, 0);
   document.getElementById('cv').textContent = fmt(h && h.cv, 1);
+  document.getElementById('amo').textContent = fmt(h && h.amo * 100, 0);
+  document.getElementById('rmssd').textContent = fmt(h && h.rmssd, 0);
   const rise = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }];
   hrBox.animate(rise, { duration: 500, delay: 2900, easing: 'ease-out', fill: 'forwards' });
   statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 3100 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
@@ -210,25 +215,42 @@ function sparkles() {
 // back to the measuring screen
 function resetFinale() {
   document.body.classList.remove('done');
-  [band, pen, gap, cam, doneEl, hrBox, ...statItems].forEach(el => el.getAnimations().forEach(a => a.cancel()));
+  [band, ring, pen, gap, cam, doneEl, hrBox, ...statItems].forEach(el => el.getAnimations().forEach(a => a.cancel()));
   document.querySelectorAll('.spark').forEach(s => s.remove());
 }
+
+// Hint line: a new text fades the old one out and itself in
+let msgText = msgEl.textContent;
+function setMsg(text) {
+  if (text === msgText) return;
+  msgText = text;
+  msgEl.getAnimations().forEach(a => a.cancel());
+  msgEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, fill: 'forwards' }).finished.then(() => {
+    msgEl.textContent = msgText;
+    msgEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 350, fill: 'forwards' });
+  }, () => {});
+}
+
+// finger on the lens with the flash on: the picture is mostly red
+const fingerOn = (r, g, b) => r > 40 && r > 1.6 * Math.max(g, b);
+let fingerAt = 0;  // when the finger was detected and the recording started, ms
 
 async function start() {
   stop();
   resetFinale();
   hrEl.textContent = '';
-  msgEl.textContent = '';
   shown = display = lastNow = 0;
+  meter = null;  // created once the finger is on the camera
   setRing(0);
-  if (!navigator.mediaDevices) { msgEl.textContent = 'Камера доступна только по HTTPS или с localhost'; return; }
+  draw();
+  if (!navigator.mediaDevices) { setMsg('Камера доступна только по HTTPS или с localhost'); return; }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
       audio: false,
     });
   } catch (e) {
-    msgEl.textContent = 'Нет доступа к камере: ' + e.message;
+    setMsg('Нет доступа к камере: ' + e.message);
     return;
   }
   video.srcObject = stream;
@@ -236,7 +258,7 @@ async function start() {
   const track = stream.getVideoTracks()[0];
   torchBtn.hidden = !(track.getCapabilities && track.getCapabilities().torch);
   setTorch(torchBtn.classList.contains('on'));
-  meter = new PpgMeter();
+  setMsg('Приложите палец к камере');
   startBtn.textContent = 'Стоп';
   nextFrame();
 }
@@ -288,8 +310,15 @@ function onFrame(now, meta) {
   let r = 0, g = 0, b = 0;
   for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
   const px = d.length / 4;
+  r /= px; g /= px; b /= px;
+  // the recording starts only once the finger covers the camera
+  if (!meter) {
+    if (!fingerOn(r, g, b)) { nextFrame(); return; }
+    meter = new PpgMeter();
+    fingerAt = now;
+  }
   // captureTime is the real camera timestamp (Chrome); fall back to callback time
-  meter.push(((meta && meta.captureTime) || now) / 1000, r / px, g / px, b / px);
+  meter.push(((meta && meta.captureTime) || now) / 1000, r, g, b);
   draw();
   if (meter.hr !== null) {
     stop();
@@ -297,14 +326,15 @@ function onFrame(now, meta) {
   } else if (meter.failed) {
     setRing(0);
     hrEl.textContent = '';
-    msgEl.textContent = `Не удалось набрать ${MIN_RUN_SEC} с чистого сигнала. Держите палец неподвижно и попробуйте ещё раз`;
+    setMsg(`Не удалось набрать ${MIN_RUN_SEC} с чистого сигнала. Держите палец неподвижно и попробуйте ещё раз`);
     stop();
   } else {
     setRing(progress(performance.now()) / MIN_RUN_SEC);
     // provisional HR over the run collected so far, greyed until the full interval is reached
     hrEl.classList.add('live');
     hrEl.textContent = meter.liveHr === null ? '' : Math.round(meter.liveHr) + ' уд/мин';
-    msgEl.textContent = 'Держите палец неподвижно';
+    setMsg(meter.badSec >= 10 ? 'Попробуйте поменять положение пальца или руки и потом держите палец неподвижно'
+      : now - fingerAt < 3000 ? 'Примите комфортное положение' : 'Держите палец неподвижно');
     nextFrame();
   }
 }
@@ -329,7 +359,7 @@ function draw() {
   const ctx = plot.getContext('2d'), actx = aurora.getContext('2d');
   ctx.clearRect(0, 0, w, h);
   actx.clearRect(0, 0, aurora.width, aurora.height);
-  if (meter.b1 === null) return;
+  if (!meter || meter.b1 === null) return;
   const total = BUF_SEC * FS, [sig, smooth] = meter.plotSignals(), s0 = meter.n - sig.length;
   const x = i => w - (sig.length - i) * w / total;
   // Aurora: one low-res column per 1/64 of its width, coloured by the quality of the sample under it.

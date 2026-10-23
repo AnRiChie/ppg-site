@@ -162,7 +162,7 @@ function findPeaks(x, hr) {
   return peaks.map(p => p.t);
 }
 
-// analysis.compute_hrv_metrics: SDNN (ms, ddof=1), CV (%), AMo (share of intervals in the modal 50 ms bin)
+// analysis.compute_hrv_metrics: SDNN (ms, ddof=1), CV (%), RMSSD (ms), AMo (share of intervals in the modal 50 ms bin)
 function hrv(x, hr) {
   const peaks = findPeaks(x, hr);
   if (peaks.length < 3) return null;
@@ -170,7 +170,8 @@ function hrv(x, hr) {
   const m = mean(rr), sdnn = Math.sqrt(rr.reduce((a, v) => a + (v - m) ** 2, 0) / (rr.length - 1));
   const lo = Math.min(...rr) - 25, counts = {};
   for (const v of rr) { const b = Math.floor((v - lo) / 50); counts[b] = (counts[b] || 0) + 1; }
-  return { sdnn, cv: sdnn / m * 100, amo: Math.max(...Object.values(counts)) / rr.length, beats: peaks.length };
+  const rmssd = Math.sqrt(mean(rr.slice(1).map((v, k) => (v - rr[k]) ** 2)));
+  return { sdnn, cv: sdnn / m * 100, rmssd, amo: Math.max(...Object.values(counts)) / rr.length, beats: peaks.length };
 }
 
 class PpgMeter {
@@ -193,7 +194,8 @@ class PpgMeter {
     this.green = false; // the newest 0.5 s step is good
     this.liveHr = null; // HR over the current, still growing run (expanding window, as compute_expanding_hr_curve)
     this.hr = null;
-    this.hrv = null;    // { sdnn, cv, amo, beats } over the final run, null if too few beats
+    this.hrv = null;    // { sdnn, cv, rmssd, amo, beats } over the final run, null if too few beats
+    this.badSec = 0;    // how long there has been no good signal, s
     this.failed = false;
   }
 
@@ -259,6 +261,7 @@ class PpgMeter {
         good++;
       }
     }
+    this.badSec = (this.n - 1 - lastGood) / FS;  // time since the last good sample (or since the start)
     const alive = lastGood >= 0 && this.n - 1 - lastGood <= MAX_GAP_SEC * FS;
     this.run = alive ? good / FS : 0;
     // a reset needs a gap > 1.5 s, i.e. several steps with run = 0, so a new run always starts from 0
