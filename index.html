@@ -93,7 +93,7 @@
   #stats div { flex: 1; text-align: center; opacity: 0; }
   #stats b { display: block; font-size: 30px; line-height: 1.2; }
   #stats span { font-size: 14px; opacity: .85; }
-  .spark { position: fixed; z-index: 3; pointer-events: none; transform: rotate(45deg); }
+  .spark { position: fixed; z-index: 3; pointer-events: none; border-radius: 50%; }
 </style>
 </head>
 <body>
@@ -161,9 +161,9 @@ const resultEl = document.getElementById('result'), doneEl = document.getElement
 const statItems = [...document.getElementById('stats').children];
 
 // Finale, ms from the moment the HR is ready: the flood reaches the full thin ring and it turns white (CSS);
-// check drawn 650-1100, its long arm breaks the ring at ~1020; 1020-1420 the thin ring is wiped from the gap's
-// lower edge clockwise round to its upper edge; 1420-2000 the logo-width ring grows the same way, from the lower
-// edge clockwise round to the upper one; pop 1950-2450, sparkles + "Готово!" from 2000,
+// check drawn 650-1100, its long arm breaks the ring at ~1020; 1020-1220 the thin ring is quickly wiped (and
+// fades) from the gap's lower edge clockwise round to its upper edge; 1220-2020 the logo-width ring grows the
+// same way while the logo swells and settles back (1220-2300); sparkles + "Готово!" from 2000,
 // "Готово!" leaves at 3700, HR and CV / AMo / RMSSD from 4000.
 const ARM = 0.165;  // where the long arm crosses the ring, share of the turn clockwise from the top
 function finish() {
@@ -173,13 +173,13 @@ function finish() {
   // pathLength is 1: dash "len 1-len" starting at -offset; "1 0" is the full ring. Both dashes have their
   // fixed end inside the gap, so only the moving end shows: the thin ring's start runs a full turn clockwise.
   ring.animate([
-    { strokeDasharray: '1 0', strokeDashoffset: -ARM },
-    { strokeDasharray: '0 1', strokeDashoffset: -ARM - 1 },
-  ], { duration: 400, delay: 1020, easing: 'cubic-bezier(.45, 0, .55, 1)', fill: 'forwards' });
+    { strokeDasharray: '1 0', strokeDashoffset: -ARM, strokeOpacity: 1 },
+    { strokeDasharray: '0 1', strokeDashoffset: -ARM - 1, strokeOpacity: 0.3 },
+  ], { duration: 200, delay: 1020, easing: 'cubic-bezier(.5, 0, .7, 1)', fill: 'forwards' });
   ring.animate([
-    { r: '109px', strokeWidth: '28px', strokeDasharray: '0 1', strokeDashoffset: -ARM },
-    { r: '109px', strokeWidth: '28px', strokeDasharray: '1 0', strokeDashoffset: -ARM },
-  ], { duration: 580, delay: 1420, easing: 'cubic-bezier(.3, .3, .25, 1)', fill: 'forwards' });
+    { r: '109px', strokeWidth: '28px', strokeDasharray: '0 1', strokeDashoffset: -ARM, strokeOpacity: 1 },
+    { r: '109px', strokeWidth: '28px', strokeDasharray: '1 0', strokeDashoffset: -ARM, strokeOpacity: 1 },
+  ], { duration: 800, delay: 1220, easing: 'cubic-bezier(.35, .2, .25, 1)', fill: 'forwards' });
   const box = document.querySelector('.plot').getBoundingClientRect();
   band.style.top = box.top + 'px';
   band.style.height = box.height + 'px';
@@ -193,8 +193,11 @@ function finish() {
     { transform: 'rotate(-36.6deg) scaleY(0) rotate(36.6deg)' },
     { transform: 'rotate(-36.6deg) scaleY(1) rotate(36.6deg)' },
   ], { duration: 120, delay: 1020, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
-  cam.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(1)' }],
-    { duration: 500, delay: 1950, easing: 'ease-in-out' });
+  cam.animate([
+    { transform: 'scale(1)', easing: 'cubic-bezier(.4, 0, .6, 1)' },
+    { transform: 'scale(1.1)', offset: 0.65, easing: 'cubic-bezier(.4, 0, .4, 1)' },
+    { transform: 'scale(1)' },
+  ], { duration: 1080, delay: 1220 });
   setTimeout(sparkles, 2000);
   // "Готово!" and the HR share the point halfway between the logo and the results line (2/3 of the screen)
   resultEl.style.setProperty('--mid', (cam.getBoundingClientRect().bottom + innerHeight * 2 / 3) / 2 + 'px');
@@ -241,22 +244,31 @@ function drawCheck(anim) {
   step();
 }
 
-// small dark green and white diamonds flying out of the ring
+// Round sparkles in the gradient's colours burst out of the ring, are slowed by the air and fall,
+// fading out. Path of a body with linear drag k and gravity g, sampled into keyframes.
+const SPARK_COLORS = ['#ffffff', '#3fb0ff', '#f5ef55', '#0b5d1e'];
 function sparkles() {
-  const r = cam.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width * 0.41;
-  for (let k = 0; k < 36; k++) {
-    const a = Math.random() * 2 * Math.PI, dist = 70 + Math.random() * 150, size = 3 + Math.random() * 5;
+  const r = cam.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width * 0.36;
+  const k = 2.2, g = 700;  // 1/s, px/s²
+  for (let n = 0; n < 90; n++) {
+    const a = Math.random() * 2 * Math.PI, v = 180 + Math.random() * 320, size = 3 + Math.random() * 6;
+    const vx = Math.cos(a) * v, vy = Math.sin(a) * v - 150, dur = 1.6 + Math.random() * 1.2;
     const s = document.createElement('div');
     s.className = 'spark';
     Object.assign(s.style, {
       left: cx + Math.cos(a) * rad - size / 2 + 'px', top: cy + Math.sin(a) * rad - size / 2 + 'px',
-      width: size + 'px', height: size + 'px', background: k % 2 ? '#fff' : '#0b5d1e',
+      width: size + 'px', height: size + 'px', background: SPARK_COLORS[n % SPARK_COLORS.length],
     });
     document.body.appendChild(s);
-    s.animate([
-      { transform: 'rotate(45deg) scale(1)', opacity: 1 },
-      { transform: `translate(${Math.cos(a) * dist}px, ${Math.sin(a) * dist}px) rotate(225deg) scale(0.3)`, opacity: 0 },
-    ], { duration: 900 + Math.random() * 600, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' }).finished.then(() => s.remove(), () => s.remove());
+    const frames = [];
+    for (let i = 0; i <= 24; i++) {
+      const t = dur * i / 24, e = (1 - Math.exp(-k * t)) / k;
+      frames.push({
+        transform: `translate(${vx * e}px, ${vy * e + g / k * (t - e)}px) scale(${1 - 0.4 * i / 24})`,
+        opacity: i < 10 ? 1 : 1 - (i - 10) / 14,
+      });
+    }
+    s.animate(frames, { duration: dur * 1000, fill: 'forwards' }).finished.then(() => s.remove(), () => s.remove());
   }
 }
 
