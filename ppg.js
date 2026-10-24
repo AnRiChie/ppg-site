@@ -283,6 +283,8 @@ class PpgMeter {
     // merge_v2_snr_profile: each sample's SNR is the Hann-weighted mean of all 3 s windows covering it
     this.num = new Float64Array(max); this.den = new Float64Array(max);
     this.runStart = -1; // first sample of the current green run, -1 when there is none
+    this.greenAt = -1;  // n at the last green step
+    this.endAt = 0;     // n where the last run ended; a new run doesn't reach back before it
     this.boundsAt = 0;  // n at the last clip-bounds refresh
     this.hann = new Float64Array(WIN_SEC * FS).map((_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * (i + 1) / (WIN_SEC * FS + 1)));
     this.n = 0;
@@ -367,24 +369,32 @@ class PpgMeter {
     return this.q[i];
   }
 
-  // Current run of good samples where bad gaps <= MAX_GAP_SEC; HR once its green time reaches MIN_RUN_SEC
+  // Current run of good samples; HR once its green time reaches MIN_RUN_SEC. The run ends only after
+  // MAX_GAP_SEC of real time without a green step: the merged SNR revises earlier samples down, so a gap
+  // measured on it ended runs 0.5-1 s after the signal went bad.
   updateRun() {
-    let start = -1, lastGood = -1, good = 0;
-    for (let i = 0; i < this.n; i++) {
-      if (this.q[i] >= this.thr) {
-        if (start < 0 || i - lastGood - 1 > MAX_GAP_SEC * FS) { start = i; good = 0; }
-        lastGood = i;
-        good++;
-      }
-    }
-    this.badSec = (this.n - 1 - lastGood) / FS;  // time since the last good sample (or since the start)
-    const alive = lastGood >= 0 && this.n - 1 - lastGood <= MAX_GAP_SEC * FS;
-    this.run = alive ? good / FS : 0;
-    this.runStart = alive ? start : -1;
-    if (this.badSec >= FAIL_SEC) this.failed = true;
-    // a reset needs a gap > 1.5 s, i.e. several steps with run = 0, so a new run always starts from 0
-    this.shown = this.run === 0 ? 0 : Math.max(this.shown, this.run);
+    const gap = MAX_GAP_SEC * FS;
     this.green = this.q[this.n - 1] >= this.thr;
+    if (this.green) this.greenAt = this.n;
+    if (this.runStart >= 0 && this.n - this.greenAt >= gap) { this.runStart = -1; this.endAt = this.n; }
+    if (this.runStart < 0 && this.green) {
+      // a new run reaches back over the good stretch that ends now (bad gaps <= MAX_GAP_SEC), not before the last end
+      let start = this.n - 1;
+      for (let i = this.n - 2, lastGood = start; i >= this.endAt && lastGood - i - 1 <= gap; i--) {
+        if (this.q[i] >= this.thr) start = lastGood = i;
+      }
+      this.runStart = start;
+    }
+    let lastGood = -1, good = 0;
+    for (let i = Math.max(0, this.runStart); this.runStart >= 0 && i < this.n; i++) {
+      if (this.q[i] >= this.thr) { lastGood = i; good++; }
+    }
+    const start = this.runStart, alive = start >= 0 && lastGood >= 0;
+    this.badSec = (this.n - Math.max(0, this.greenAt)) / FS;  // time since the last green step (or since the start)
+    this.run = alive ? good / FS : 0;
+    if (this.badSec >= FAIL_SEC) this.failed = true;
+    // drops to 0 only when the run ends by time, so a new run always starts from 0
+    this.shown = start < 0 ? 0 : Math.max(this.shown, this.run);
     if (!alive || (lastGood + 1 - start) / FS < WIN_SEC) { this.liveHr = null; return; }
     const seg = this.filtered(start, lastGood + 1);
     if (this.shown >= this.minRun) {

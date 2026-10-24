@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Пульс по камере</title>
 <style>
-  :root { --bg: #ffffff; --fg: #111111; --muted: #666666; --bad: #e53935; --good: #43a047; color-scheme: light dark; }
+  :root { --bg: #ffffff; --fg: #111111; --muted: #666666; --bad: #e53935; --good: #21a038;  /* --good is Sber green, the one shade used everywhere */ color-scheme: light dark; }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #000000; --fg: #f2f2f2; --muted: #999999; }
   }
@@ -41,7 +41,8 @@
     color: #fff; font-size: calc(min(72vw, 40dvh, 320px) * 0.13); font-weight: 700; font-variant-numeric: tabular-nums;
     text-shadow: 0 0 8px rgba(0, 0, 0, .6); transition: opacity .2s;
   }
-  #hr { font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; }
+  #hr { font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; transition: opacity .5s; }
+  body.done #hr { opacity: 0; }
   #hr.live { color: var(--muted); }
   #msg {
     height: 3em; overflow: hidden; color: var(--muted); text-align: center; font-size: 15px; line-height: 1.5em;
@@ -74,7 +75,7 @@
     background:
       radial-gradient(120% 80% at 0% 0%, #1e8fe0 0%, rgba(30, 143, 224, 0) 60%),
       radial-gradient(120% 80% at 0% 100%, #e8e43a 0%, rgba(232, 228, 58, 0) 60%),
-      #21a038;
+      var(--good);
   }
   body.done #sky { opacity: 1; }
   body.done .lens, body.done #count, body.done .plot canvas { opacity: 0; }
@@ -142,7 +143,7 @@
   </div>
 </div>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
-<script src="ppg.js?v=8"></script>
+<script src="ppg.js?v=10"></script>
 <script>
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
@@ -161,26 +162,26 @@ const pen = document.getElementById('pen'), gap = document.getElementById('gap')
 const resultEl = document.getElementById('result'), doneEl = document.getElementById('done'), hrBox = document.getElementById('hrbox');
 const statItems = [...document.getElementById('stats').children];
 
-// Finale, ms from the moment the HR is ready: the flood reaches the full thin ring and it turns white (CSS);
-// check drawn 650-1100, its long arm breaks the ring at ~1020; 1020-1220 the thin ring is quickly wiped (and
-// fades) from the gap's lower edge clockwise round to its upper edge; 1220-2020 the logo-width ring grows the
-// same way while the logo swells and settles back (1220-2300); sparkles + "Готово!" from 2000,
-// "Готово!" leaves at 3700, HR and CV / AMo / RMSSD from 4000.
+// Finale, ms from the moment the ring is full: the flood reaches the full thin ring and it turns white (CSS);
+// from L0 the logo: check drawn L0+0-900, its long arm breaks the ring at L0+740; L0+740-1140 the thin ring is
+// wiped (and fades) from the gap's lower edge clockwise round to its upper edge; L0+1140-2740 the logo-width
+// ring grows the same way while the logo swells and settles back (L0+1140-3300); sparkles + "Готово!" from
+// L0+2700, "Готово!" leaves at L0+4400, HR and CV / AMo / RMSSD from L0+4700.
 const ARM = 0.165;  // where the long arm crosses the ring, share of the turn clockwise from the top
+const L0 = 650;     // the logo starts once the flood has turned the ring white
 function finish() {
   setRing(1);
-  hrEl.textContent = '';
   setMsg('');
   // pathLength is 1: dash "len 1-len" starting at -offset; "1 0" is the full ring. Both dashes have their
   // fixed end inside the gap, so only the moving end shows: the thin ring's start runs a full turn clockwise.
   ring.animate([
     { strokeDasharray: '1 0', strokeDashoffset: -ARM, strokeOpacity: 1 },
     { strokeDasharray: '0 1', strokeDashoffset: -ARM - 1, strokeOpacity: 0.3 },
-  ], { duration: 200, delay: 1020, easing: 'cubic-bezier(.5, 0, .7, 1)', fill: 'forwards' });
+  ], { duration: 400, delay: L0 + 740, easing: 'cubic-bezier(.5, 0, .7, 1)', fill: 'forwards' });
   ring.animate([
     { r: '109px', strokeWidth: '28px', strokeDasharray: '0 1', strokeDashoffset: -ARM, strokeOpacity: 1 },
     { r: '109px', strokeWidth: '28px', strokeDasharray: '1 0', strokeDashoffset: -ARM, strokeOpacity: 1 },
-  ], { duration: 800, delay: 1220, easing: 'cubic-bezier(.35, .2, .25, 1)', fill: 'forwards' });
+  ], { duration: 1600, delay: L0 + 1140, easing: 'cubic-bezier(.35, .2, .25, 1)', fill: 'forwards' });
   const box = document.querySelector('.plot').getBoundingClientRect();
   band.style.top = box.top + 'px';
   band.style.height = box.height + 'px';
@@ -189,33 +190,36 @@ function finish() {
     { duration: 1400, easing: 'cubic-bezier(.45, 0, .2, 1)', fill: 'forwards' });
   document.body.classList.add('done');
   drawCheck(pen.animate([{ opacity: 1 }, { opacity: 1 }],
-    { duration: 450, delay: 650, easing: 'cubic-bezier(.42, 0, .58, 1)', fill: 'forwards' }));
+    { duration: 900, delay: L0, easing: 'cubic-bezier(.42, 0, .58, 1)', fill: 'forwards' }));
   gap.animate([
     { transform: 'rotate(-36.6deg) scaleY(0) rotate(36.6deg)' },
     { transform: 'rotate(-36.6deg) scaleY(1) rotate(36.6deg)' },
-  ], { duration: 120, delay: 1020, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
+  ], { duration: 240, delay: L0 + 740, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
   cam.animate([
     { transform: 'scale(1)', easing: 'cubic-bezier(.4, 0, .6, 1)' },
     { transform: 'scale(1.1)', offset: 0.65, easing: 'cubic-bezier(.4, 0, .4, 1)' },
     { transform: 'scale(1)' },
-  ], { duration: 1080, delay: 1220 });
-  setTimeout(sparkles, 2000);
+  ], { duration: 2160, delay: L0 + 1140 });
+  setTimeout(sparkles, L0 + 2700);
   // "Готово!" and the HR share the point halfway between the logo and the results line (2/3 of the screen)
   resultEl.style.setProperty('--mid', (cam.getBoundingClientRect().bottom + innerHeight * 2 / 3) / 2 + 'px');
   doneEl.animate([
     { opacity: 0, transform: 'scale(1.6)' },
     { opacity: 1, transform: 'scale(0.94)', offset: 0.7 },
     { opacity: 1, transform: 'scale(1)' },
-  ], { duration: 700, delay: 2000, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
-  doneEl.animate([{ opacity: 1 }, { opacity: 0, transform: 'scale(0.9)' }], { duration: 300, delay: 3700, fill: 'forwards' });
+  ], { duration: 700, delay: L0 + 2700, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
+  doneEl.animate([{ opacity: 1 }, { opacity: 0, transform: 'scale(0.9)' }], { duration: 300, delay: L0 + 4400, fill: 'forwards' });
   const h = meter.hrv, fmt = (v, d) => (h ? v.toFixed(d) : '—');
   document.getElementById('hrval').textContent = Math.round(meter.hr);
   document.getElementById('cv').textContent = fmt(h && h.cv, 1);
   document.getElementById('amo').textContent = fmt(h && h.amo * 100, 0);
-  document.getElementById('rmssd').textContent = fmt(h && h.rmssd, 0);
+  // RMSSD only when the 20% rule dropped <= 10% of intervals; approximate (camera reads ~1.7x the device)
+  const rmssdEl = document.getElementById('rmssd');
+  rmssdEl.textContent = h && h.rmssdOk ? '≈' + h.rmssd.toFixed(0) : '—';
+  rmssdEl.nextElementSibling.textContent = h && !h.rmssdOk ? 'RMSSD: сигнал недостаточно чистый' : 'RMSSD, мс';
   const rise = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }];
-  hrBox.animate(rise, { duration: 500, delay: 4000, easing: 'ease-out', fill: 'forwards' });
-  statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 4200 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
+  hrBox.animate(rise, { duration: 500, delay: L0 + 4700, easing: 'ease-out', fill: 'forwards' });
+  statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: L0 + 4900 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
   startBtn.classList.add('shown');
 }
 
@@ -248,7 +252,7 @@ function drawCheck(anim) {
 // Round sparkles in the gradient's colours burst from behind the logo, are slowed by the air and fall,
 // fading out. Path of a body with linear drag k and gravity g, sampled into keyframes. Start points across
 // the whole disc, start times, speeds and drag all differ, so the cloud doesn't keep the ring's shape.
-const SPARK_COLORS = ['#ffffff', '#3fb0ff', '#f5ef55', '#21a038'];
+const SPARK_COLORS = ['#ffffff', '#3fb0ff', '#f5ef55', 'var(--good)'];
 function sparkles() {
   const r = cam.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width * 0.36;
   const g = 700;  // px/s²
@@ -310,6 +314,7 @@ const MSG_MOVE = 'Попробуйте поменять положение па�
 // back to waiting for the finger: no recording, empty ring and plot
 function resetRecording() {
   meter = null;
+  finishing = false;
   shown = display = lastNow = 0;
   viewT = drawAt = 0; sigN = -1; dv = []; dsm = []; dq = [];
   setRing(0);
@@ -413,8 +418,9 @@ function onFrame(now, meta) {
   // captureTime is the real camera timestamp (Chrome); fall back to callback time
   meter.push(((meta && meta.captureTime) || now) / 1000, r, g, b);
   if (meter.hr !== null) {
+    // the ring first fills up at its own pace, then render() starts the finale from the full ring
     stop();
-    finish();
+    finishing = true;
   } else if (meter.failed) {
     // 30 s in a row without a good signal; the camera stays on for the next attempt
     resetRecording();
@@ -455,11 +461,14 @@ let viewT = 0, drawAt = 0, yLo = 0, yHi = 0;
 let sigN = -1, sigs = null;   // plotSignals cached for meter.n
 let dv = [], dsm = [], dq = []; // eased signal, smoothed curve and quality by sample index
 
+let finishing = false;  // HR is ready, the ring is still filling up to full
 function render(now) {
   requestAnimationFrame(render);
-  if (!stream || !meter) return;
-  setRing(progress(now) / MIN_RUN_SEC);
+  if (!meter || !(stream || finishing)) return;
+  const p = progress(now) / MIN_RUN_SEC;
+  setRing(p);
   draw(now);
+  if (finishing && p >= 1) { finishing = false; finish(); }
 }
 requestAnimationFrame(render);
 
