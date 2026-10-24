@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Пульс по камере</title>
 <style>
-  :root { --bg: #ffffff; --fg: #111111; --muted: #666666; --bad: #e53935; --good: #21a038;  /* --good is Sber green, the one shade used everywhere */ color-scheme: light dark; }
+  :root { --bg: #ffffff; --fg: #111111; --muted: #666666; --bad: #dc1829;  /* --bad: saturated red opposite Sber green */ --good: #21a038;  /* --good is Sber green, the one shade used everywhere */ color-scheme: light dark; }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #000000; --fg: #f2f2f2; --muted: #999999; }
   }
@@ -16,7 +16,7 @@
   main {
     position: relative; z-index: 1;
     height: 100%; max-width: 480px; margin: 0 auto; padding: 16px;
-    display: grid; grid-template-rows: auto 64px 3em minmax(120px, 1fr) auto; justify-items: center; align-items: center; gap: 8px;
+    display: grid; grid-template-rows: auto 117px minmax(120px, 1fr) auto; justify-items: center; align-items: center; gap: 8px;
     grid-template-columns: 100%;  /* the full-width plot overflows both sides instead of widening the column */
   }
   /* geometry in the 300x300 units of the reference logo. While measuring: a thin round-capped ring
@@ -41,24 +41,31 @@
     color: #fff; font-size: calc(min(72vw, 40dvh, 320px) * 0.13); font-weight: 700; font-variant-numeric: tabular-nums;
     text-shadow: 0 0 8px rgba(0, 0, 0, .6); transition: opacity .2s;
   }
-  #hr { font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; transition: opacity .5s; }
-  body.done #hr { opacity: 0; }
+  /* HR and hints share the row between the camera and the plot: without HR the hint sits in its middle,
+     when HR appears it fades in at the top and the hint glides down under it */
+  .info { position: relative; width: 100%; height: 100%; }
+  #hr {
+    position: absolute; left: 0; right: 0; top: 0; text-align: center;
+    font-size: 48px; line-height: 64px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums;
+    opacity: 0; transition: opacity .5s;
+  }
+  #hr span { font-size: 18px; font-weight: 400; }
+  .info.has-hr #hr { opacity: 1; }
+  body.done .info #hr { opacity: 0; }
   #hr.live { color: var(--muted); }
   #msg {
+    position: absolute; left: 0; right: 0; top: 0; transform: translateY(36px); transition: transform .6s ease;
     height: 3em; overflow: hidden; color: var(--muted); text-align: center; font-size: 15px; line-height: 1.5em;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
+  .info.has-hr #msg { transform: translateY(72px); }
   /* the plot runs from the left to the right edge of the screen */
   .plot { position: relative; width: 100vw; height: 100%; }
   .plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity .5s; }
-  /* aurora: low-res quality colours stretched and blurred, fading out at top and bottom only;
-     it overhangs the plot by AURORA_PX per side so the blur's own fade stays off-screen */
-  #aurora {
-    left: -48px; width: calc(100% + 96px);
-    filter: blur(8px);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent);
-    mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent);
-  }
+  /* aurora: low-res quality colours stretched and blurred. The canvas itself fades to transparent at top
+     and bottom (see draw), so the blur never meets an opaque edge (that showed as bright frames); it overhangs
+     the plot by AURORA_PX per side so the blur's own fade at the left and right stays off-screen */
+  #aurora { left: -80px; width: calc(100% + 160px); top: -24px; height: calc(100% + 48px); filter: blur(20px); }
   .buttons { display: flex; gap: 12px; }
   button { font: inherit; padding: 12px 24px; border-radius: 24px; border: 2px solid var(--fg); background: var(--bg); color: var(--fg); }
   button.on { background: var(--fg); color: var(--bg); }
@@ -125,9 +132,11 @@
     </svg>
     <div id="count"></div>
   </div>
-  <div id="hr"></div>
-  <div id="msg">Приложите палец к камере, чтобы начать</div>
-  <div class="plot"><canvas id="aurora" width="64" height="16"></canvas><canvas id="plot"></canvas></div>
+  <div class="info">
+    <div id="hr"></div>
+    <div id="msg">Приложите палец к камере, чтобы начать</div>
+  </div>
+  <div class="plot"><canvas id="aurora" width="64" height="32"></canvas><canvas id="plot"></canvas></div>
   <div class="buttons">
     <button id="start">Ещё раз</button>
     <button id="torch" class="on" hidden>Вспышка</button>
@@ -148,9 +157,9 @@
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
 const ring = document.getElementById('ring'), countEl = document.getElementById('count');
-const AURORA_PX = 48;  // must match #aurora's overhang in CSS
+const AURORA_PX = 80;  // must match #aurora's overhang in CSS
 let shown = 0, shownAt = 0, display = 0;  // progress interpolation between the 0.5 s quality steps
-const hrEl = document.getElementById('hr'), msgEl = document.getElementById('msg');
+const hrEl = document.getElementById('hr'), msgEl = document.getElementById('msg'), info = document.querySelector('.info');
 const startBtn = document.getElementById('start'), torchBtn = document.getElementById('torch');
 const grab = document.createElement('canvas');
 grab.width = 80; grab.height = 60;
@@ -319,6 +328,7 @@ function resetRecording() {
   viewT = drawAt = 0; sigN = -1; dv = []; dsm = []; dq = [];
   setRing(0);
   hrEl.textContent = '';
+  info.classList.remove('has-hr');
   draw();
 }
 
@@ -365,7 +375,7 @@ function setRing(p) {
   ring.style.strokeDashoffset = 1 - p;
   ring.style.strokeDasharray = p >= 1 ? 'none' : '';  // a full dash still leaves a hairline seam at its start
   ring.style.opacity = p > 0 ? 1 : 0;
-  countEl.textContent = (MIN_RUN_SEC * (1 - p)).toFixed(2);
+  countEl.textContent = meter ? (MIN_RUN_SEC * (1 - p)).toFixed(2) : '';  // only while recording
 }
 
 // Green time shown to the user: the meter updates it every 0.5 s, in between it creeps on in real time
@@ -430,8 +440,10 @@ function onFrame(now, meta) {
     nextFrame();
   } else {
     // provisional HR over the run collected so far, greyed until the full interval is reached
+    // (the last value stays while it fades out)
     hrEl.classList.add('live');
-    hrEl.textContent = meter.liveHr === null ? '' : Math.round(meter.liveHr) + ' уд/мин';
+    if (meter.liveHr !== null) hrEl.innerHTML = Math.round(meter.liveHr) + '<span> уд/мин</span>';
+    info.classList.toggle('has-hr', meter.liveHr !== null);
     // the "change position" hint shows for 4 s at 10 and 20 s without a good signal, then the usual line again
     const bad = meter.badSec, hint = (bad >= 10 && bad < 14) || (bad >= 20 && bad < 24);
     setMsg(hint ? MSG_MOVE : now - fingerAt < 3000 ? 'Примите комфортное положение' : MSG_HOLD);
@@ -457,6 +469,9 @@ function hexRgb(name) {
 // curve, quality) and the vertical scale ease toward what the meter computes, so the 0.5 s bound and quality
 // updates and the still-settling newest samples glide instead of jumping.
 const PLOT_LAG = 0.2;  // s
+const auroraFade = aurora.getContext('2d').createLinearGradient(0, 0, 0, aurora.height);
+[[0, 0], [0.2, 0.25], [0.38, 0.85], [0.5, 1], [0.62, 0.85], [0.8, 0.25], [1, 0]]
+  .forEach(([at, a]) => auroraFade.addColorStop(at, `rgba(0,0,0,${a})`));
 let viewT = 0, drawAt = 0, yLo = 0, yHi = 0;
 let sigN = -1, sigs = null;   // plotSignals cached for meter.n
 let dv = [], dsm = [], dq = []; // eased signal, smoothed curve and quality by sample index
@@ -507,6 +522,11 @@ function draw(now) {
       actx.fillStyle = qualityColor(dq[i] + (dq[j] - dq[i]) * (fi - i), bg, bad, good);
       actx.fillRect(c, 0, 1, aurora.height);
     }
+    // soft vertical falloff to fully transparent rows at top and bottom
+    actx.globalCompositeOperation = 'destination-in';
+    actx.fillStyle = auroraFade;
+    actx.fillRect(0, 0, aurora.width, aurora.height);
+    actx.globalCompositeOperation = 'source-over';
   }
   let min = Infinity, max = -Infinity;
   for (let i = s0; i < n; i++) {
