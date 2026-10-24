@@ -325,7 +325,7 @@ function resetRecording() {
   meter = null;
   finishing = false;
   shown = display = lastNow = 0;
-  viewT = drawAt = 0; sigN = -1; dv = []; dsm = []; dq = [];
+  viewT = drawAt = introAt = yLo = yHi = 0; sigN = -1; dv = []; dsm = []; dq = [];
   setRing(0);
   hrEl.textContent = '';
   info.classList.remove('has-hr');
@@ -472,7 +472,8 @@ const PLOT_LAG = 0.2;  // s
 const auroraFade = aurora.getContext('2d').createLinearGradient(0, 0, 0, aurora.height);
 [[0, 0], [0.2, 0.25], [0.38, 0.85], [0.5, 1], [0.62, 0.85], [0.8, 0.25], [1, 0]]
   .forEach(([at, a]) => auroraFade.addColorStop(at, `rgba(0,0,0,${a})`));
-let viewT = 0, drawAt = 0, yLo = 0, yHi = 0;
+const INTRO_MS = 1400, START_FADE = 1;  // plot floating in from the right; soft front over the first 1 s, s
+let viewT = 0, drawAt = 0, yLo = 0, yHi = 0, introAt = 0;
 let sigN = -1, sigs = null;   // plotSignals cached for meter.n
 let dv = [], dsm = [], dq = []; // eased signal, smoothed curve and quality by sample index
 
@@ -499,16 +500,21 @@ function draw(now) {
   const [sig, smooth] = sigs, s0 = sigN - sig.length, n = meter.n;
   const dt = drawAt ? Math.min(0.1, (now - drawAt) / 1000) : 0;
   drawAt = now;
-  // steady clock nudged toward the newest sample; snaps after a stall
+  // steady clock nudged toward the newest sample; snaps after a stall. On the first frame the view's right
+  // edge is at the recording's start, then for INTRO_MS it eases out to its place: the plot floats in from the right.
   const head = meter.t0 + (n - 1) / FS, aim = head - PLOT_LAG;
-  viewT = viewT && Math.abs(aim - viewT) < 0.5 ? viewT + dt + (aim - viewT) * Math.min(1, 2 * dt) : aim;
+  if (!introAt) introAt = now;
+  const intro = Math.min(1, (now - introAt) / INTRO_MS);
+  if (intro < 1) viewT = meter.t0 + (aim - meter.t0) * (1 - (1 - intro) ** 3);
+  else viewT = Math.abs(aim - viewT) < 0.5 ? viewT + dt + (aim - viewT) * Math.min(1, 2 * dt) : aim;
   viewT = Math.min(viewT, head);
   const x = i => w - (viewT - meter.t0 - i / FS) * w / BUF_SEC;  // i: sample index
   const a = dt ? 1 - Math.exp(-dt / 0.15) : 1;
   const ease = (arr, i, v) => { arr[i] = arr[i] === undefined || !dt ? v : arr[i] + (v - arr[i]) * a; };
   for (let k = 0; k < sig.length; k++) { ease(dv, s0 + k, sig[k]); ease(dsm, s0 + k, smooth[k]); }
   // Aurora: low-res columns coloured by the (eased) quality at their time. Samples whose quality is not
-  // known yet (the newest step) take the newest known value, columns before the start the first one.
+  // known yet (the newest step) take the newest known value; before the recording's start it fades out over
+  // START_FADE, like the curve, so both come in from the right with a soft front.
   const bg = hexRgb('--bg'), bad = hexRgb('--bad'), good = hexRgb('--good');
   let last = n - 1;
   while (last >= 0 && !(meter.quality(last) >= 0)) last--;
@@ -519,19 +525,22 @@ function draw(now) {
       const f = (c + 0.5) / aurora.width * (1 + 2 * ext) - ext;  // position in plot widths
       const fi = Math.min(n - 1, Math.max(Math.max(0, s0), (viewT - BUF_SEC * (1 - f) - meter.t0) * FS));
       const i = Math.floor(fi), j = Math.min(n - 1, i + 1);
+      actx.globalAlpha = Math.min(1, Math.max(0, (viewT - BUF_SEC * (1 - f) - meter.t0) / START_FADE));
       actx.fillStyle = qualityColor(dq[i] + (dq[j] - dq[i]) * (fi - i), bg, bad, good);
       actx.fillRect(c, 0, 1, aurora.height);
     }
+    actx.globalAlpha = 1;
     // soft vertical falloff to fully transparent rows at top and bottom
     actx.globalCompositeOperation = 'destination-in';
     actx.fillStyle = auroraFade;
     actx.fillRect(0, 0, aurora.width, aurora.height);
     actx.globalCompositeOperation = 'source-over';
   }
+  // vertical scale from the visible part; while floating in, from all of it, so it doesn't jump as it enters
   let min = Infinity, max = -Infinity;
   for (let i = s0; i < n; i++) {
     const xi = x(i);
-    if (xi >= 0 && xi <= w) { min = Math.min(min, dv[i]); max = Math.max(max, dv[i]); }
+    if (intro < 1 || (xi >= 0 && xi <= w)) { min = Math.min(min, dv[i]); max = Math.max(max, dv[i]); }
   }
   if (min < max) {
     const b = yHi > yLo ? a : 1;
@@ -551,6 +560,17 @@ function draw(now) {
   const css = name => getComputedStyle(document.documentElement).getPropertyValue(name);
   line(dv, css('--muted'), 1, 0.45);
   line(dsm, css('--fg'), 4, 1);
+  // soft front at the recording's start
+  const xa = x(0), xb = x(START_FADE * FS);
+  if (xb > 0) {
+    const fade = ctx.createLinearGradient(xa, 0, xb, 0);
+    fade.addColorStop(0, 'rgba(0,0,0,0)');
+    fade.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+  }
 }
 
 setRing(0);
