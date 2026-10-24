@@ -141,37 +141,136 @@ function gaussSmooth(x, sigma) {
   });
 }
 
-// full_refine step 5 peaks: Gaussian (sigma = period / 6), find_peaks(distance = 0.6 period, prominence = 0.25 std).
-// Peak times are refined with a parabola through 3 samples instead of full_refine's 15x upsampling.
-function findPeaks(x, hr) {
-  const period = FS * 60 / hr, sm = gaussSmooth(x, period / 6), minProm = 0.25 * std(sm), dist = 0.6 * period;
-  const peaks = [];
-  for (let i = 1; i < sm.length - 1; i++) {
-    if (!(sm[i] > sm[i - 1] && sm[i] >= sm[i + 1])) continue;
-    // prominence over one period on each side: height above the higher of the two side minima
-    let lo = Infinity, hi = Infinity;
-    for (let k = Math.max(0, Math.round(i - period)); k < i; k++) lo = Math.min(lo, sm[k]);
-    for (let k = i + 1; k <= Math.min(sm.length - 1, Math.round(i + period)); k++) hi = Math.min(hi, sm[k]);
-    if (sm[i] - Math.max(lo, hi) < minProm) continue;
-    const den = sm[i - 1] - 2 * sm[i] + sm[i + 1];
-    const t = i + (den ? 0.5 * (sm[i - 1] - sm[i + 1]) / den : 0);
-    const last = peaks[peaks.length - 1];
-    if (last && t - last.t < dist) { if (sm[i] > last.v) peaks[peaks.length - 1] = { t, v: sm[i] }; }
-    else peaks.push({ t, v: sm[i] });
+// ---------- HRV: pipeline #1 of experiments/rmssd_optimization, as analysis.camera_beats + nn_intervals ----------
+
+const UP = 15;                 // 30 Hz -> 450 Hz for beat timing
+const MAX_REJECTED = 0.10;     // RMSSD is shown only if the 20% rule dropped no more than this share
+// scipy butter(2, [0.5, 3.5] / 15, 'band') and lfilter_zi of it
+const BP_B = [0.06745527388907191, 0, -0.13491054777814382, 0, 0.06745527388907191];
+const BP_A = [1, -3.0190167591086796, 3.501130890634956, -1.890939881229966, 0.41280159809618855];
+const BP_ZI = [-0.06745527388906106, -0.06745527388909385, 0.06745527388908797, 0.06745527388906743];
+
+// scipy.signal.lfilter (direct form II transposed) with initial state zi
+function lfilter(x, zi) {
+  const z = zi.slice(), y = new Float64Array(x.length);
+  for (let i = 0; i < x.length; i++) {
+    const v = BP_B[0] * x[i] + z[0];
+    for (let k = 1; k < BP_B.length; k++) z[k - 1] = BP_B[k] * x[i] - BP_A[k] * v + (z[k] || 0);
+    y[i] = v;
   }
-  return peaks.map(p => p.t);
+  return y;
 }
 
-// analysis.compute_hrv_metrics: SDNN (ms, ddof=1), CV (%), RMSSD (ms), AMo (share of intervals in the modal 50 ms bin)
-function hrv(x, hr) {
-  const peaks = findPeaks(x, hr);
-  if (peaks.length < 3) return null;
-  const rr = peaks.slice(1).map((t, k) => (t - peaks[k]) / FS * 1000);
+// scipy.signal.filtfilt with the default odd extension of 3 * 5 samples
+function filtfilt(x) {
+  const n = x.length, pad = 15, ext = new Float64Array(n + 2 * pad);
+  for (let i = 0; i < pad; i++) {
+    ext[i] = 2 * x[0] - x[pad - i];
+    ext[n + pad + i] = 2 * x[n - 1] - x[n - 2 - i];
+  }
+  ext.set(x, pad);
+  const f = lfilter(ext, BP_ZI.map(v => v * ext[0])).reverse();
+  return lfilter(f, BP_ZI.map(v => v * f[0])).reverse().subarray(pad, pad + n);
+}
+
+// scipy CubicSpline (not-a-knot) through samples 0..n-1, evaluated every 1 / UP of a sample (clamped to the end)
+function splineUp(x) {
+  const n = x.length, r = new Float64Array(n), M = new Float64Array(n);
+  for (let i = 1; i < n - 1; i++) r[i] = 6 * (x[i - 1] - 2 * x[i] + x[i + 1]);
+  // not-a-knot makes M0 = 2 M1 - M2, so the first row collapses to 6 M1 = r1 (same at the end)
+  M[1] = r[1] / 6; M[n - 2] = r[n - 2] / 6;
+  // Thomas algorithm for M[i-1] + 4 M[i] + M[i+1] = r[i], i = 2..n-3
+  const c = new Float64Array(n), d = new Float64Array(n);
+  for (let i = 2; i <= n - 3; i++) {
+    const rhs = r[i] - (i === 2 ? M[1] : 0) - (i === n - 3 ? M[n - 2] : 0);
+    const den = 4 - (i > 2 ? c[i - 1] : 0);
+    c[i] = 1 / den;
+    d[i] = (rhs - (i > 2 ? d[i - 1] : 0)) / den;
+  }
+  for (let i = n - 3; i >= 2; i--) M[i] = d[i] - (i < n - 3 ? c[i] * M[i + 1] : 0);
+  M[0] = 2 * M[1] - M[2]; M[n - 1] = 2 * M[n - 2] - M[n - 3];
+  const y = new Float64Array(n * UP);
+  for (let k = 0; k < y.length; k++) {
+    const u = Math.min(k / UP, n - 1), i = Math.min(Math.floor(u), n - 2), t = u - i, s = 1 - t;
+    y[k] = s * x[i] + t * x[i + 1] + ((s ** 3 - s) * M[i] + (t ** 3 - t) * M[i + 1]) / 6;
+  }
+  return y;
+}
+
+// scipy.signal.find_peaks(x, distance, prominence): local maxima (plateau midpoints), then distance (higher first),
+// then prominence: height above the higher of the lowest points on each side before a higher sample
+function findPeaks(x, distance, prominence) {
+  let peaks = [];
+  for (let i = 1; i < x.length - 1; i++) {
+    if (!(x[i - 1] < x[i])) continue;
+    let j = i + 1;
+    while (j < x.length - 1 && x[j] === x[i]) j++;
+    if (x[j] < x[i]) { peaks.push((i + j - 1) >> 1); i = j - 1; }
+  }
+  const keep = new Array(peaks.length).fill(true);
+  const order = peaks.map((_, k) => k).sort((a, b) => x[peaks[a]] - x[peaks[b]]).reverse();
+  for (const k of order) {
+    if (!keep[k]) continue;
+    for (let j = k - 1; j >= 0 && peaks[k] - peaks[j] < distance; j--) keep[j] = false;
+    for (let j = k + 1; j < peaks.length && peaks[j] - peaks[k] < distance; j++) keep[j] = false;
+  }
+  peaks = peaks.filter((_, k) => keep[k]);
+  return peaks.filter(p => {
+    let lo = x[p], hi = x[p];
+    for (let i = p; i >= 0 && x[i] <= x[p]; i--) lo = Math.min(lo, x[i]);
+    for (let i = p; i < x.length && x[i] <= x[p]; i++) hi = Math.min(hi, x[i]);
+    return x[p] - Math.max(lo, hi) >= prominence;
+  });
+}
+
+// Beat times (s): x = POS + filter_pipeline at FS, g = raw green over the same samples (for the sign of POS)
+function cameraBeats(x, g, hr) {
+  // POS sign is arbitrary: align with -G minus its 1 s mean (blood volume up = brightness down)
+  let c = 0;
+  const mx = mean(x), h = FS / 2;
+  for (let i = 0; i < x.length; i++) {
+    const a = Math.max(0, i - h), b = Math.min(g.length, i + h);
+    c += (x[i] - mx) * (mean(g.subarray(a, b)) - g[i]);
+  }
+  const y = splineUp(filtfilt(c < 0 ? x.map(v => -v) : x));
+  const d1 = y.map((v, i) => (y[Math.min(y.length - 1, i + 1)] - y[Math.max(0, i - 1)]) / (i > 0 && i < y.length - 1 ? 2 : 1));
+  const fsUp = FS * UP, period = 60 / hr * fsUp, w = Math.floor(0.3 * period);
+  const slopes = findPeaks(d1, Math.max(Math.floor(0.6 * period), Math.floor(0.33 * fsUp)), 0.25 * std(d1));
+  const feet = [];
+  for (const p of slopes) {
+    if (d1[p] <= 0) continue;
+    let yMin = Infinity;
+    for (let i = Math.max(0, p - w); i <= p; i++) yMin = Math.min(yMin, y[i]);
+    feet.push((p - (y[p] - yMin) / d1[p]) / fsUp);
+  }
+  return feet;
+}
+
+// NN rule: drop intervals > 20% off the local median of 11; RMSSD also skips dropped intervals and jumps > 150 ms.
+// SDNN (ms, ddof=1), CV (%), AMo (share of NN in the modal 50 ms bin) as analysis.compute_hrv_metrics.
+// rmssdOk: the 20% rule dropped <= 10% of intervals; camera RMSSD is still approximate (~1.7x the device).
+function hrv(x, g, hr) {
+  const beats = cameraBeats(x, g, hr);
+  const nn = beats.slice(1).map((t, k) => (t - beats[k]) * 1000);
+  const ok = nn.map((v, i) => {
+    const med = percentile(nn.slice(Math.max(0, i - 5), i + 6), 50);
+    return Math.abs(v - med) <= 0.2 * med;
+  });
+  const rr = nn.filter((_, i) => ok[i]);
+  const diffs = [];
+  for (let i = 1; i < nn.length; i++) {
+    const d = nn[i] - nn[i - 1];
+    if (ok[i] && ok[i - 1] && Math.abs(d) <= 150) diffs.push(d);
+  }
+  if (rr.length < 5 || diffs.length < 4) return null;
   const m = mean(rr), sdnn = Math.sqrt(rr.reduce((a, v) => a + (v - m) ** 2, 0) / (rr.length - 1));
   const lo = Math.min(...rr) - 25, counts = {};
   for (const v of rr) { const b = Math.floor((v - lo) / 50); counts[b] = (counts[b] || 0) + 1; }
-  const rmssd = Math.sqrt(mean(rr.slice(1).map((v, k) => (v - rr[k]) ** 2)));
-  return { sdnn, cv: sdnn / m * 100, rmssd, amo: Math.max(...Object.values(counts)) / rr.length, beats: peaks.length };
+  const rejected = 1 - rr.length / nn.length;
+  return {
+    sdnn, cv: sdnn / m * 100, rmssd: Math.sqrt(mean(diffs.map(d => d * d))),
+    amo: Math.max(...Object.values(counts)) / rr.length, beats: beats.length, rejected, rmssdOk: rejected <= MAX_REJECTED + 1e-9,  // tolerance: exactly 10% must pass
+  };
 }
 
 class PpgMeter {
@@ -197,7 +296,7 @@ class PpgMeter {
     this.green = false; // the newest 0.5 s step is good
     this.liveHr = null; // HR over the current, still growing run (expanding window, as compute_expanding_hr_curve)
     this.hr = null;
-    this.hrv = null;    // { sdnn, cv, rmssd, amo, beats } over the final run, null if too few beats
+    this.hrv = null;    // { sdnn, cv, rmssd, amo, beats, rejected, rmssdOk } over the final run, null if too few beats
     this.badSec = 0;    // how long there has been no good signal, s
     this.failed = false;
   }
@@ -288,7 +387,11 @@ class PpgMeter {
     this.green = this.q[this.n - 1] >= this.thr;
     if (!alive || (lastGood + 1 - start) / FS < WIN_SEC) { this.liveHr = null; return; }
     const seg = this.filtered(start, lastGood + 1);
-    if (this.shown >= this.minRun) { this.hr = hrCzt(seg); this.hrv = hrv(seg, this.hr); }
+    if (this.shown >= this.minRun) {
+      this.hr = hrCzt(seg);
+      // filtered() starts on the 0.5 s grid: give hrv the green channel over the same samples
+      this.hrv = hrv(seg, this.g.subarray(start - start % (STEP_SEC * FS), lastGood + 1), this.hr);
+    }
     else this.liveHr = hrCzt(seg, 550);  // 0.005 Hz grid: cheap enough for every 0.5 s on a phone
   }
 

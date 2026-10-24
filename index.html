@@ -141,7 +141,7 @@
   </div>
 </div>
 <!-- bump ?v= after editing ppg.js: phones keep the old copy otherwise -->
-<script src="ppg.js?v=8"></script>
+<script src="ppg.js?v=9"></script>
 <script>
 const video = document.querySelector('video');
 const plot = document.getElementById('plot'), aurora = document.getElementById('aurora');
@@ -211,7 +211,10 @@ function finish() {
   document.getElementById('hrval').textContent = Math.round(meter.hr);
   document.getElementById('cv').textContent = fmt(h && h.cv, 1);
   document.getElementById('amo').textContent = fmt(h && h.amo * 100, 0);
-  document.getElementById('rmssd').textContent = fmt(h && h.rmssd, 0);
+  // RMSSD only when the 20% rule dropped <= 10% of intervals; approximate (camera reads ~1.7x the device)
+  const rmssdEl = document.getElementById('rmssd');
+  rmssdEl.textContent = h && h.rmssdOk ? '≈' + h.rmssd.toFixed(0) : '—';
+  rmssdEl.nextElementSibling.textContent = h && !h.rmssdOk ? 'RMSSD: сигнал недостаточно чистый' : 'RMSSD, мс';
   const rise = [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }];
   hrBox.animate(rise, { duration: 500, delay: 4000, easing: 'ease-out', fill: 'forwards' });
   statItems.forEach((el, k) => el.animate(rise, { duration: 500, delay: 4200 + 120 * k, easing: 'ease-out', fill: 'forwards' }));
