@@ -174,8 +174,8 @@ const statItems = [...document.getElementById('stats').children];
 // Finale, ms from the moment the ring is full: the flood reaches the full thin ring and it turns white (CSS);
 // from L0 the logo: check drawn L0+0-675, its long arm breaks the ring at L0+555; L0+555-1005 the thin ring is
 // wiped (and fades) from the gap's lower edge clockwise round to its upper edge; L0+1005-2805 the logo-width
-// ring grows the same way while the logo swells and settles back (L0+1005-3435); sparkles + "Готово!" from
-// L0+2765, "Готово!" leaves at L0+4465, HR and CV / AMo / RMSSD from L0+4765.
+// ring grows the same way; the logo swells and settles back L0+1795-3010, peaking as the ring nearly closes;
+// sparkles + "Готово!" from L0+2765, "Готово!" leaves at L0+4465, HR and CV / AMo / RMSSD from L0+4765.
 const ARM = 0.165;  // where the long arm crosses the ring, share of the turn clockwise from the top
 const L0 = 650;     // the logo starts once the flood has turned the ring white
 function finish() {
@@ -208,7 +208,7 @@ function finish() {
     { transform: 'scale(1)', easing: 'cubic-bezier(.4, 0, .6, 1)' },
     { transform: 'scale(1.1)', offset: 0.65, easing: 'cubic-bezier(.4, 0, .4, 1)' },
     { transform: 'scale(1)' },
-  ], { duration: 2430, delay: L0 + 1005 });
+  ], { duration: 1215, delay: L0 + 1795 });
   setTimeout(sparkles, L0 + 2765);
   // "Готово!" and the HR share the point halfway between the logo and the results line (2/3 of the screen)
   resultEl.style.setProperty('--mid', (cam.getBoundingClientRect().bottom + innerHeight * 2 / 3) / 2 + 'px');
